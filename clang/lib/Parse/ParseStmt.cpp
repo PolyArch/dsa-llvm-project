@@ -18,6 +18,7 @@
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/SSHint.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/TypoCorrection.h"
 using namespace clang;
@@ -412,6 +413,10 @@ Retry:
   case tok::annot_pragma_loop_hint:
     ProhibitAttributes(Attrs);
     return ParsePragmaLoopHint(Stmts, StmtCtx, TrailingElseLoc, Attrs);
+
+  case tok::annot_pragma_stream_specialize:
+    ProhibitAttributes(Attrs);
+    return ParsePragmaStreamSpecialize(Stmts, StmtCtx, TrailingElseLoc, Attrs);
 
   case tok::annot_pragma_dump:
     HandlePragmaDump();
@@ -2562,4 +2567,42 @@ bool Parser::ParseOpenCLUnrollHintAttribute(ParsedAttributes &Attrs) {
     return false;
   }
   return true;
+}
+
+StmtResult Parser::ParsePragmaStreamSpecialize(clang::Parser::StmtVector &Stmts,
+                                               ParsedStmtContext StmtCtx,
+                                               clang::SourceLocation *TrailingElseLoc,
+                                               clang::Parser::ParsedAttributesWithRange &Attrs) {
+  ParsedAttributesWithRange SSAttrs(AttrFactory);
+
+  if (Tok.is(tok::annot_pragma_stream_specialize)) {
+    SSHint Hint;
+    HandlePragmaStreamSpecialize(Hint);
+    if (Hint.PragmaNameLoc->Ident->isStr("config")) {
+      SSAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                     Hint.PragmaNameLoc->Loc, nullptr, 0, ParsedAttr::AS_Pragma);
+    } else {
+      for (auto &elem : Hint.Clauses) {
+        SmallVector<ArgsUnion, 0> Args;
+        auto IL = IdentifierLoc::create(Actions.Context,
+                                        elem.first.getLocation(),
+                                        elem.first.getIdentifierInfo());
+        Args.push_back(IL);
+        if (elem.second) {
+          Args.push_back(elem.second);
+        }
+        SSAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                       Hint.PragmaNameLoc->Loc, Args.begin(), Args.size(),
+                       ParsedAttr::AS_Pragma);
+      }
+    }
+  }
+
+
+  MaybeParseCXX11Attributes(Attrs);
+
+  StmtResult S = ParseStatementOrDeclarationAfterAttributes(Stmts, StmtCtx, TrailingElseLoc, Attrs);
+
+  Attrs.takeAllFrom(SSAttrs);
+  return S;
 }

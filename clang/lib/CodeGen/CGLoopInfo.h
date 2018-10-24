@@ -14,6 +14,8 @@
 #ifndef LLVM_CLANG_LIB_CODEGEN_CGLOOPINFO_H
 #define LLVM_CLANG_LIB_CODEGEN_CGLOOPINFO_H
 
+#include <map>
+#include <string>
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/DebugLoc.h"
@@ -75,6 +77,23 @@ struct LoopAttributes {
 
   /// Value for llvm.loop.pipeline.iicount metadata.
   unsigned PipelineInitiationInterval;
+
+  /// Value for llvm.loop.ss.config metadata.
+  bool SSConfig;
+
+  /// Value for llvm.loop.ss.stream metadata.
+  enum StreamLevel { None, NonBlock, Barrier };
+  StreamLevel SSDataStream;
+
+  /// Value for llvm.loop.ss.dedicated metadata.
+  /// If this is specified, unroll count can be potentially specified too.
+  bool SSDfgDedicated;
+  /// Value for llvm.loop.ss.datamove metadata.
+  bool SSDataMove;
+
+  /// Inputs and outputs dependence of the given DFG
+  enum DependKind { In, Out, InOut };
+  llvm::SmallVector<std::tuple<std::string, llvm::Value*, llvm::Value*>, 0> DependClauses;
 };
 
 /// Information used when generating a structured loop.
@@ -200,12 +219,15 @@ public:
   void push(llvm::BasicBlock *Header, const llvm::DebugLoc &StartLoc,
             const llvm::DebugLoc &EndLoc);
 
+  // A simple hack to support pre-emit non constants
   /// Begin a new structured loop. Stage attributes from the Attrs list.
   /// The staged attributes are applied to the loop and then cleared.
   void push(llvm::BasicBlock *Header, clang::ASTContext &Ctx,
             const clang::CodeGenOptions &CGOpts,
             llvm::ArrayRef<const Attr *> Attrs, const llvm::DebugLoc &StartLoc,
-            const llvm::DebugLoc &EndLoc);
+            const llvm::DebugLoc &EndLoc,
+            const std::map<const clang::Attr *, std::pair<llvm::Value *, llvm::Value *>> &Emitted
+              = std::map<const clang::Attr *, std::pair<llvm::Value *, llvm::Value *>>());
 
   /// End the current loop.
   void pop();
@@ -270,6 +292,23 @@ public:
   /// Set the pipeline initiation interval.
   void setPipelineInitiationInterval(unsigned C) {
     StagedAttrs.PipelineInitiationInterval = C;
+  }
+  /// \brief Set the loop configuration state.
+  void setSSConfig(bool Enable = true) { StagedAttrs.SSConfig = Enable; }
+
+  /// \brief Set the loop dfg offload state.
+  void setSSDfgOffload(bool Enable = true) { StagedAttrs.SSDfgDedicated = Enable; }
+
+  /// \brief Set the loop as a data move loop
+  void setSSDataMove(bool Enable = true) { StagedAttrs.SSDataMove = Enable; }
+
+  /// \brief Set the current loop level the outer-most stream dectection.
+  void setSSStreamLevel(LoopAttributes::StreamLevel Enable) { StagedAttrs.SSDataStream = Enable; }
+
+  /// \brief Push DFG dependent hint to loop attributes.
+  void pushSSDfgDepend(const std::string &HintType,
+                       const std::pair<llvm::Value *, llvm::Value *> Val) {
+    StagedAttrs.DependClauses.push_back(std::make_tuple(HintType, Val.first, Val.second));
   }
 
 private:

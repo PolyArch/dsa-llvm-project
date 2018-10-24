@@ -3505,3 +3505,54 @@ def ReleaseHandle : InheritableParamAttr {
   let Subjects = SubjectList<[ParmVar]>;
   let Documentation = [ReleaseHandleDocs];
 }
+
+def SSConfig : Attr {
+  /// config: Indicates a configuration of a multi/uni-dfg CGRA
+  let Spellings = [Pragma<"ss", "config">];
+
+  let AdditionalMembers = [{
+    void printPrettyPragma(raw_ostream & OS, const PrintingPolicy &Policy) const {
+      return ;
+    }
+  }];
+
+  let Documentation = [Undocumented];
+}
+
+def SSDataStream : Attr {
+  /// #pragma ss stream
+  /// stream: Indicates from this loop level to the loop level DFG is
+  ///         annotated will be loops form data streams
+  let Spellings = [Pragma<"ss", "stream">];
+  let Args = [BoolArgument<"Barrier">];
+
+  let AdditionalMembers = [{
+    void printPrettyPragma(raw_ostream & OS, const PrintingPolicy &Policy) const {
+      return ;
+    }
+  }];
+
+  let Documentation = [Undocumented];
+}
+
+def SSDfg : Attr {
+
+  /// dfg: Indicates the loop body will be offloaded as a DFG
+  let Spellings = [Pragma<"ss", "dfg">];
+
+  /// This attribute will either be an dfg offload hint or a dfg input/output hint
+  /// State of the loop optimization specified by the spelling.
+  let Args = [
+      EnumArgument<"Type", "HintType", ["dedicated", "temporal", "datamove", "unroll", "in", "out", "inout"],
+                                       ["Dedicated", "Temporal", "Datamove", "Unroll", "In", "Out", "InOut"]>,
+      ExprArgument<"Value">
+  ];
+
+  let AdditionalMembers = [{
+    void printPrettyPragma(raw_ostream & OS, const PrintingPolicy &Policy) const {
+      return ;
+    }
+  }];
+
+  let Documentation = [Undocumented];
+}

@@ -407,7 +407,9 @@ public:
     }
 
     /// Get the name of the capture helper.
-    virtual StringRef getHelperName() const { return "__captured_stmt"; }
+    virtual StringRef getHelperName() const {
+      return "__captured_stmt";
+    }
 
   private:
     /// The kind of captured statement being generated.
@@ -3077,12 +3079,17 @@ public:
   /// \return True if the statement was handled.
   bool EmitSimpleStmt(const Stmt *S);
 
-  Address EmitCompoundStmt(const CompoundStmt &S, bool GetLast = false,
+  Address EmitCompoundStmt(const CompoundStmt &S,
+                           bool GetLast = false,
                            AggValueSlot AVS = AggValueSlot::ignored());
   Address EmitCompoundStmtWithoutScope(const CompoundStmt &S,
                                        bool GetLast = false,
-                                       AggValueSlot AVS =
-                                                AggValueSlot::ignored());
+                                       AggValueSlot AVS = AggValueSlot::ignored());
+
+
+  enum SSRegionKind { Temporal = 0, Config = 1, Unknown = 2 };
+  /// Emit code region annotated by #pragma ss dfg temporal
+  void EmitSSCapturedRegion(const CompoundStmt &S, SSRegionKind Kind);
 
   /// EmitLabel - Emit the block for the given label. It is legal to call this
   /// function even if there is no current insertion point.

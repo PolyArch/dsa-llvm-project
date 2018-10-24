@@ -16,7 +16,7 @@ namespace clang {
 enum CapturedRegionKind {
   CR_Default,
   CR_ObjCAtFinally,
-  CR_OpenMP
+  CR_OpenMP,
 };
 
 } // end namespace clang

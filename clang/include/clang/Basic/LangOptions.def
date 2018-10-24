@@ -373,6 +373,7 @@ LANGOPT(RegisterStaticDestructors, 1, 1, "Register C++ static destructors")
 LANGOPT(MatrixTypes, 1, 0, "Enable or disable the builtin matrix type")
 
 COMPATIBLE_VALUE_LANGOPT(MaxTokens, 32, 0, "Max number of tokens per TU or 0")
+LANGOPT(StreamSpecialize, 32, 0, "Stream specialized family architecture support")
 
 ENUM_LANGOPT(SignReturnAddressScope, SignReturnAddressScopeKind, 2, SignReturnAddressScopeKind::None,
              "Scope of return address signing")

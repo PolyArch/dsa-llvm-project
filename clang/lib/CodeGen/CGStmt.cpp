@@ -394,7 +394,8 @@ bool CodeGenFunction::EmitSimpleStmt(const Stmt *S) {
 /// EmitCompoundStmt - Emit a compound statement {..} node.  If GetLast is true,
 /// this captures the expression result of the last sub-statement and returns it
 /// (for use by the statement expression extension).
-Address CodeGenFunction::EmitCompoundStmt(const CompoundStmt &S, bool GetLast,
+Address CodeGenFunction::EmitCompoundStmt(const CompoundStmt &S,
+                                          bool GetLast,
                                           AggValueSlot AggSlot) {
   PrettyStackTraceLoc CrashInfo(getContext().getSourceManager(),S.getLBracLoc(),
                              "LLVM IR generation of compound statement ('{}')");
@@ -403,6 +404,25 @@ Address CodeGenFunction::EmitCompoundStmt(const CompoundStmt &S, bool GetLast,
   LexicalScope Scope(*this, S.getSourceRange());
 
   return EmitCompoundStmtWithoutScope(S, GetLast, AggSlot);
+}
+
+void CodeGenFunction::EmitSSCapturedRegion(const CompoundStmt &S,
+                                           CodeGenFunction::SSRegionKind Kind) {
+  static llvm::Constant *ScopeIntrin[2][CodeGenFunction::Unknown] = {
+    {llvm::Intrinsic::getDeclaration(&CGM.getModule(),
+                                    llvm::Intrinsic::ss_temporal_region_start),
+    llvm::Intrinsic::getDeclaration(&CGM.getModule(),
+                                    llvm::Intrinsic::ss_config_start)},
+    {llvm::Intrinsic::getDeclaration(&CGM.getModule(),
+                                    llvm::Intrinsic::ss_temporal_region_end),
+    llvm::Intrinsic::getDeclaration(&CGM.getModule(),
+                                    llvm::Intrinsic::ss_config_end)},
+
+  };
+
+  auto Start = Builder.CreateCall(ScopeIntrin[0][Kind]);
+  EmitCompoundStmtWithoutScope(S);
+  Builder.CreateCall(ScopeIntrin[1][Kind], {Start});
 }
 
 Address
@@ -618,6 +638,20 @@ void CodeGenFunction::EmitAttributedStmt(const AttributedStmt &S) {
       break;
     }
   SaveAndRestore<bool> save_nomerge(InNoMergeAttributedStmt, nomerge);
+
+  for (auto Attr : S.getAttrs()) {
+    if (auto SDA = dyn_cast<SSDfgAttr>(Attr)) {
+      if (SDA->getType() == SSDfgAttr::Temporal) {
+        assert(S.getSubStmt()->getStmtClass() == Stmt::CompoundStmtClass);
+        EmitSSCapturedRegion(cast<CompoundStmt>(*S.getSubStmt()), Temporal);
+        return;
+      }
+    } else if (isa<SSConfigAttr>(Attr)) {
+      EmitSSCapturedRegion(cast<CompoundStmt>(*S.getSubStmt()), Config);
+      return;
+    }
+  }
+
   EmitStmt(S.getSubStmt(), S.getAttrs());
 }
 
@@ -924,9 +958,28 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
   EmitBlock(CondBlock);
 
   const SourceRange &R = S.getSourceRange();
+
+  // A simple hack to support pre-emit non constants
+  std::map<const Attr *, std::pair<llvm::Value *, llvm::Value *>> Emitted;
+  for (auto Attr : ForAttrs) {
+    if (auto SA = dyn_cast<SSDfgAttr>(Attr)) {
+      if (SA->getType() != SSDfgAttr::HintType::Unroll && SA->getValue() != nullptr) {
+        if (SA->getValue()->getStmtClass() == Stmt::StmtClass::OMPArraySectionExprClass) {
+          auto E = static_cast<OMPArraySectionExpr*>(SA->getValue());
+          auto LB = EmitOMPArraySectionExpr(E, true);
+          auto UB = EmitOMPArraySectionExpr(E, false);
+          Emitted[Attr] = std::make_pair(LB.getPointer(), UB.getPointer());
+        } else {
+          auto LV = EmitLValue(SA->getValue());
+          Emitted[Attr] = std::make_pair(LV.getPointer(), nullptr);
+        }
+      }
+    }
+  }
+
   LoopStack.push(CondBlock, CGM.getContext(), CGM.getCodeGenOpts(), ForAttrs,
                  SourceLocToDebugLoc(R.getBegin()),
-                 SourceLocToDebugLoc(R.getEnd()));
+                 SourceLocToDebugLoc(R.getEnd()), Emitted);
 
   // If the for loop doesn't have an increment we can just use the
   // condition as the continue block.  Otherwise we'll need to create

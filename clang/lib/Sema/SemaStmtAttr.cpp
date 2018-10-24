@@ -425,6 +425,21 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
     return handleLikely(S, St, A, Range);
   case ParsedAttr::AT_Unlikely:
     return handleUnlikely(S, St, A, Range);
+  case ParsedAttr::AT_SSDataStream: {
+    std::string Type = "barrier";
+    if (A.getNumArgs() != 0)
+      Type = A.getArgAsIdent(0)->Ident->getName();
+    return SSDataStreamAttr::CreateImplicit(S.Context, Type == "barrier");
+  }
+  case ParsedAttr::AT_SSDfg:{
+    SSDfgAttr::HintType Type;
+    assert(SSDfgAttr::ConvertStrToHintType(A.getArgAsIdent(0)->Ident->getName(), Type));
+    if (A.getNumArgs() == 2)
+      return SSDfgAttr::CreateImplicit(S.Context, Type, A.getArgAsExpr(1));
+    return SSDfgAttr::CreateImplicit(S.Context, Type, nullptr);
+  }
+  case ParsedAttr::AT_SSConfig:
+    return SSConfigAttr::CreateImplicit(S.Context);
   default:
     // if we're here, then we parsed a known attribute, but didn't recognize
     // it as a statement attribute => it is declaration attribute

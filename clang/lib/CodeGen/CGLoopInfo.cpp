@@ -17,6 +17,7 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/Support/FormatVariadic.h"
 using namespace clang::CodeGen;
 using namespace llvm;
 
@@ -426,6 +427,59 @@ MDNode *LoopInfo::createMetadata(
         Ctx, {MDString::get(Ctx, "llvm.loop.parallel_accesses"), AccGroup}));
   }
 
+  // Injecting stream-specialized meta-data
+  {
+    SmallVector<Metadata *, 4> Args;
+    LLVMContext &Ctx = Header->getContext();
+    TempMDTuple TempNode = MDNode::getTemporary(Ctx, None);
+    Args.push_back(TempNode.get());
+
+    if (Attrs.SSDataStream != LoopAttributes::None) {
+      Metadata *Vals[] = {
+        MDString::get(Ctx, "llvm.loop.ss.stream"),
+        ConstantAsMetadata::get(ConstantInt::get(llvm::Type::getInt32Ty(Ctx),
+                                                 Attrs.SSDataStream == LoopAttributes::Barrier))
+      };
+      Args.push_back(MDNode::get(Ctx, Vals));
+    }
+
+    if (Attrs.SSDfgDedicated) {
+      Metadata *Vals[] = {
+        MDString::get(Ctx, "llvm.loop.ss.dedicated"),
+        ConstantAsMetadata::get(ConstantInt::get(llvm::Type::getInt32Ty(Ctx), Attrs.UnrollCount))
+      };
+      Args.push_back(MDNode::get(Ctx, Vals));
+    }
+
+    if (Attrs.SSDataMove) {
+      Metadata *Vals[] = {
+        MDString::get(Ctx, "llvm.loop.ss.datamove"),
+        ConstantAsMetadata::get(ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1))
+      };
+      Args.push_back(MDNode::get(Ctx, Vals));
+    }
+
+    for (auto Elem : Attrs.DependClauses) {
+      auto Str = std::get<0>(Elem);
+      auto LB = std::get<1>(Elem);
+      auto UB = std::get<2>(Elem);
+      auto MDStr = MDString::get(Ctx, formatv("llvm.loop.ss.dfg.{0}", Str).str());
+      if (UB != nullptr) {
+        Metadata *Vals[] = { MDStr, ValueAsMetadata::get(LB), ValueAsMetadata::get(UB) };
+        Args.push_back(MDNode::get(Ctx, Vals));
+      } else {
+        Metadata *Vals[] = { MDStr, ValueAsMetadata::get(LB) };
+        Args.push_back(MDNode::get(Ctx, Vals));
+      }
+    }
+
+    if (!Args.empty()) {
+      MDNode *LoopID = MDNode::getDistinct(Ctx, Args);
+      LoopID->replaceOperandWith(0, LoopID);
+      return LoopID;
+    }
+  }
+
   LoopProperties.insert(LoopProperties.end(), AdditionalLoopProperties.begin(),
                         AdditionalLoopProperties.end());
   return createFullUnrollMetadata(Attrs, LoopProperties, HasUserTransforms);
@@ -438,7 +492,9 @@ LoopAttributes::LoopAttributes(bool IsParallel)
       VectorizePredicateEnable(LoopAttributes::Unspecified), VectorizeWidth(0),
       InterleaveCount(0), UnrollCount(0), UnrollAndJamCount(0),
       DistributeEnable(LoopAttributes::Unspecified), PipelineDisabled(false),
-      PipelineInitiationInterval(0) {}
+      PipelineInitiationInterval(0),
+      SSDataStream(LoopAttributes::None), SSDfgDedicated(false), SSDataMove(false),
+      DependClauses() {}
 
 void LoopAttributes::clear() {
   IsParallel = false;
@@ -453,6 +509,11 @@ void LoopAttributes::clear() {
   DistributeEnable = LoopAttributes::Unspecified;
   PipelineDisabled = false;
   PipelineInitiationInterval = 0;
+  /// Stream Specialized Attributes
+  SSDataStream = LoopAttributes::None;
+  SSDfgDedicated = false;
+  SSDataMove = false;
+  DependClauses.clear();
 }
 
 LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
@@ -476,7 +537,10 @@ LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
       Attrs.UnrollEnable == LoopAttributes::Unspecified &&
       Attrs.UnrollAndJamEnable == LoopAttributes::Unspecified &&
       Attrs.DistributeEnable == LoopAttributes::Unspecified && !StartLoc &&
-      !EndLoc)
+      !EndLoc &&
+      !Attrs.SSDfgDedicated &&
+      Attrs.SSDataStream == LoopAttributes::None &&
+      !Attrs.SSDataMove)
     return;
 
   TempLoopID = MDNode::getTemporary(Header->getContext(), None);
@@ -577,7 +641,8 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
                          const clang::CodeGenOptions &CGOpts,
                          ArrayRef<const clang::Attr *> Attrs,
                          const llvm::DebugLoc &StartLoc,
-                         const llvm::DebugLoc &EndLoc) {
+                         const llvm::DebugLoc &EndLoc,
+                         const std::map<const clang::Attr *, std::pair<Value*, Value*>> &Emitted) {
 
   // Identify loop hint attributes from Attrs.
   for (const auto *Attr : Attrs) {
@@ -762,6 +827,40 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
         (StagedAttrs.UnrollEnable == LoopAttributes::Unspecified &&
          StagedAttrs.UnrollCount == 0))
       setUnrollState(LoopAttributes::Disable);
+
+  for (auto Attr : Attrs) {
+    if (auto DA = dyn_cast<SSDfgAttr>(Attr)) {
+      auto VP = Emitted.find(Attr);
+      switch(DA->getType()) {
+      case SSDfgAttr::Dedicated:
+      case SSDfgAttr::Temporal:
+        setSSDfgOffload();
+        break;
+      case SSDfgAttr::Datamove:
+        setSSDataMove();
+        break;
+      case SSDfgAttr::Unroll: {
+        auto Int = DA->getValue()->EvaluateKnownConstInt(Ctx);
+        setUnrollCount(Int.getZExtValue());
+        break;
+      }
+      case SSDfgAttr::In:
+        assert(VP != Emitted.end());
+        pushSSDfgDepend("in", VP->second);
+        break;
+      case SSDfgAttr::Out:
+        assert(VP != Emitted.end());
+        pushSSDfgDepend("out", VP->second);
+        break;
+      case SSDfgAttr::InOut:
+        assert(VP != Emitted.end());
+        pushSSDfgDepend("out", VP->second);
+        break;
+      }
+    } else if (auto SL = dyn_cast<SSDataStreamAttr>(Attr)) {
+      setSSStreamLevel(SL->getBarrier() ? LoopAttributes::Barrier : LoopAttributes::NonBlock);
+    }
+  }
 
   /// Stage the attributes.
   push(Header, StartLoc, EndLoc);

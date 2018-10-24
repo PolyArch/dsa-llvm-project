@@ -20,6 +20,7 @@
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/Scope.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/raw_ostream.h"
 using namespace clang;
 
 namespace {
@@ -280,12 +281,20 @@ struct PragmaAttributeHandler : public PragmaHandler {
 
 struct PragmaMaxTokensHereHandler : public PragmaHandler {
   PragmaMaxTokensHereHandler() : PragmaHandler("max_tokens_here") {}
-  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
-                    Token &FirstToken) override;
 };
 
 struct PragmaMaxTokensTotalHandler : public PragmaHandler {
   PragmaMaxTokensTotalHandler() : PragmaHandler("max_tokens_total") {}
+};
+
+struct PragmaNoStreamSpecializeHandler : public PragmaHandler {
+  PragmaNoStreamSpecializeHandler() : PragmaHandler("ss") { }
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override;
+};
+
+struct PragmaStreamSpecializeHandler : public PragmaHandler {
+  PragmaStreamSpecializeHandler() : PragmaHandler("ss") {}
   void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
                     Token &FirstToken) override;
 };
@@ -416,11 +425,21 @@ void Parser::initializePragmaHandlers() {
       std::make_unique<PragmaAttributeHandler>(AttrFactory);
   PP.AddPragmaHandler("clang", AttributePragmaHandler.get());
 
+<<<<<<< HEAD
   MaxTokensHerePragmaHandler = std::make_unique<PragmaMaxTokensHereHandler>();
   PP.AddPragmaHandler("clang", MaxTokensHerePragmaHandler.get());
 
   MaxTokensTotalPragmaHandler = std::make_unique<PragmaMaxTokensTotalHandler>();
   PP.AddPragmaHandler("clang", MaxTokensTotalPragmaHandler.get());
+=======
+  // For customized pragma we should not constrict its namespace.
+  if (getLangOpts().StreamSpecialize) {
+    StreamSpecializeHandler = std::make_unique<PragmaStreamSpecializeHandler>();
+  } else {
+    StreamSpecializeHandler = std::make_unique<PragmaNoStreamSpecializeHandler>();
+  }
+  PP.AddPragmaHandler(StreamSpecializeHandler.get());
+>>>>>>> Hack the frontend to fit in ss pragmas
 }
 
 void Parser::resetPragmaHandlers() {
@@ -532,11 +551,16 @@ void Parser::resetPragmaHandlers() {
   PP.RemovePragmaHandler("clang", AttributePragmaHandler.get());
   AttributePragmaHandler.reset();
 
+<<<<<<< HEAD
   PP.RemovePragmaHandler("clang", MaxTokensHerePragmaHandler.get());
   MaxTokensHerePragmaHandler.reset();
 
   PP.RemovePragmaHandler("clang", MaxTokensTotalPragmaHandler.get());
   MaxTokensTotalPragmaHandler.reset();
+=======
+  PP.RemovePragmaHandler(StreamSpecializeHandler.get());
+  StreamSpecializeHandler.reset();
+>>>>>>> Hack the frontend to fit in ss pragmas
 }
 
 /// Handle the annotation token produced for #pragma unused(...)
@@ -720,8 +744,7 @@ void Parser::HandlePragmaFEnvRound() {
   Actions.setRoundingMode(PragmaLoc, RM);
 }
 
-StmtResult Parser::HandlePragmaCaptured()
-{
+StmtResult Parser::HandlePragmaCaptured() {
   assert(Tok.is(tok::annot_pragma_captured));
   ConsumeAnnotationToken();
 
@@ -733,7 +756,7 @@ StmtResult Parser::HandlePragmaCaptured()
   SourceLocation Loc = Tok.getLocation();
 
   ParseScope CapturedRegionScope(this, Scope::FnScope | Scope::DeclScope |
-                                           Scope::CompoundStmtScope);
+                                       Scope::CompoundStmtScope);
   Actions.ActOnCapturedRegionStart(Loc, getCurScope(), CR_Default,
                                    /*NumParams=*/1);
 
@@ -3537,6 +3560,7 @@ void PragmaAttributeHandler::HandlePragma(Preprocessor &PP,
                       /*DisableMacroExpansion=*/false, /*IsReinject=*/false);
 }
 
+<<<<<<< HEAD
 // Handle '#pragma clang max_tokens 12345'.
 void PragmaMaxTokensHereHandler::HandlePragma(Preprocessor &PP,
                                               PragmaIntroducer Introducer,
@@ -3596,4 +3620,273 @@ void PragmaMaxTokensTotalHandler::HandlePragma(Preprocessor &PP,
   }
 
   PP.overrideMaxTokens(MaxTokens, Loc);
+=======
+namespace {
+
+using TokenVec = SmallVector<Token, 0>;
+using ArgType = std::pair<Token, TokenVec>;
+
+struct SSInfo {
+  Token Type;
+  Token OffloadTo;
+  SmallVector<ArgType, 0> Args;
+};
+
+}
+
+/// Ignore the pragmas for stream-specialize hints.
+void PragmaNoStreamSpecializeHandler::HandlePragma(Preprocessor &PP,
+                                                   PragmaIntroducer Introducer,
+                                                   Token &FirstTok) {
+  if (!PP.getDiagnostics().isIgnored(diag::warn_pragma_omp_ignored,
+                                     FirstTok.getLocation())) {
+    PP.Diag(FirstTok, diag::warn_pragma_omp_ignored);
+    PP.getDiagnostics().setSeverity(diag::warn_pragma_omp_ignored,
+                                    diag::Severity::Ignored, SourceLocation());
+  }
+  PP.DiscardUntilEndOfDirective();
+}
+
+/// Handle the pragmas for stream-specialize hints.
+///
+/// The syntax is:
+/// \code
+///  #pragma ss config
+///  #pragma ss dfg [dedicated/temporal] [unroll(x)] [in/out/inout]
+///  #pragma ss stream [barrier]
+/// \endcode
+///
+/// The subject-set clause defines the set of declarations which receive the
+/// attribute. Its exact syntax is described in the LanguageExtensions document
+/// in Clang's documentation.
+///
+/// This directive instructs the compiler to begin/finish applying the specified
+/// attribute to the set of attribute-specific declarations in the active range
+/// of the pragma.
+
+void PragmaStreamSpecializeHandler::HandlePragma(Preprocessor &PP,
+                                                 PragmaIntroducer Introducer,
+                                                 Token &Tok) {
+
+  Token FirstTok = Tok;
+
+  PP.Lex(Tok);
+  if (Tok.isNot(tok::identifier)) {
+    PP.Diag(Tok.getLocation(), diag::err_expected) << tok::identifier;
+    return;
+  }
+
+  auto Info = new (PP.getPreprocessorAllocator()) SSInfo;
+  Info->OffloadTo.startToken();
+
+  auto *Str = Tok.getIdentifierInfo();
+  Info->Type = Tok;
+  if (Str->isStr("config") || Str->isStr("stream")) {
+    PP.Lex(Tok);
+
+    if (!Str->isStr("config")) {
+
+      if (Tok.is(tok::identifier)) {
+        auto TII = Tok.getIdentifierInfo();
+        if (TII->isStr("barrier") || TII->isStr("nonblock")) {
+          Info->Args.push_back(std::make_pair(Tok, TokenVec({})));
+          PP.Lex(Tok);
+        } else {
+          PP.Diag(Tok.getLocation(), diag::err_expected)
+            << "'barrier'/'nonblock' identifier expected";
+        }
+      }
+
+    }
+
+  } else if (Str->isStr("dfg")) {
+
+    Info->Type = Tok;
+
+    PP.Lex(Tok);
+    while (Tok.isNot(tok::eod)) {
+      if (Tok.isNot(tok::identifier)) {
+        PP.Diag(Tok.getLocation(), diag::err_expected)
+          << tok::identifier << "pragma information required";
+        break;
+      }
+      // Unroll Factor
+      if (Tok.getIdentifierInfo()->isStr("unroll")) {
+        ArgType Unroll;
+        Unroll.first = Tok;
+        PP.Lex(Tok);
+
+        int ParenCnt = 0;
+        bool Failed = false;
+        do {
+          if (Tok.is(tok::l_paren)) ++ParenCnt;
+          if (Tok.is(tok::r_paren)) --ParenCnt;
+          if (ParenCnt < 0) {
+            Failed = true;
+            break;
+          }
+          Unroll.second.push_back(Tok);
+          PP.Lex(Tok);
+        } while (ParenCnt != 0);
+
+        if (Failed) {
+          PP.Diag(Tok.getLocation(), diag::err_pragma_detect_mismatch_malformed);
+          break;
+        }
+
+        Info->Args.push_back(Unroll);
+
+      // Temporal/Dedicated Region
+      } else if (Tok.getIdentifierInfo()->isStr("dedicated") ||
+                 Tok.getIdentifierInfo()->isStr("temporal") ||
+                 Tok.getIdentifierInfo()->isStr("datamove")) {
+        Info->OffloadTo = Tok;
+        PP.Lex(Tok);
+      // Depend Clause
+      } else if (Tok.getIdentifierInfo()->isStr("depend")) {
+        PP.Lex(Tok);
+        if (Tok.isNot(tok::l_paren)) {
+          PP.Diag(Tok.getLocation(), diag::err_expected)
+            << "'(' token expected";
+          break;
+        }
+        PP.Lex(Tok);
+        if (Tok.isNot(tok::identifier)) {
+          PP.Diag(Tok.getLocation(), diag::err_expected)
+            << tok::identifier << " expected";
+          break;
+        }
+        if (!Tok.getIdentifierInfo()->isStr("in") &&
+            !Tok.getIdentifierInfo()->isStr("out") &&
+            !Tok.getIdentifierInfo()->isStr("inout")) {
+          PP.Diag(Tok.getLocation(), diag::err_expected)
+            << "in/out/inout expected";
+          break;
+        }
+        ArgType Depend;
+        Depend.first = Tok;
+        PP.Lex(Tok);
+        if (Tok.isNot(tok::colon)) {
+          PP.Diag(Tok.getLocation(), diag::err_expected)
+            << "':' token expected";
+          break;
+        }
+        PP.Lex(Tok);
+        int ParenCnt = 1;
+        while (ParenCnt) {
+          Depend.second.push_back(Tok);
+          PP.Lex(Tok);
+          ParenCnt += Tok.is(tok::l_paren);
+          ParenCnt -= Tok.is(tok::r_paren);
+        }
+        Info->Args.push_back(Depend);
+        assert(Tok.is(tok::r_paren));
+        PP.Lex(Tok);
+      } else {
+        PP.Diag(Tok.getLocation(), diag::err_expected) << "Not a dfg clause!";
+        return;
+      }
+    }
+
+    if (Info->Type.is(tok::unknown)) {
+      PP.Diag(Tok.getLocation(), diag::err_expected)
+        << tok::identifier
+        << "temporal/dedicated/datamove";
+      return;
+    }
+
+  } else {
+    PP.Diag(Tok.getLocation(), diag::err_expected) << tok::identifier << "dfg/stream/config";
+    return;
+  }
+
+  // EOD
+  if (Tok.isNot(tok::eod)) {
+    PP.Diag(Tok.getLocation(), diag::err_expected) << tok::eod << "The end of pragma";
+    return;
+  }
+
+  Token Finalize;
+
+  Finalize.startToken();
+  Finalize.setKind(tok::annot_pragma_stream_specialize);
+  Finalize.setLocation(FirstTok.getLocation());
+  Finalize.setAnnotationValue(static_cast<void*>(Info));
+  Finalize.setAnnotationEndLoc(Tok.getLocation());
+
+  PP.EnterToken(Finalize, false);
+
+}
+
+
+bool Parser::HandlePragmaStreamSpecialize(SSHint &Hint) {
+  assert(Tok.is(tok::annot_pragma_stream_specialize));
+
+  auto *Info = static_cast<SSInfo*>(Tok.getAnnotationValue());
+
+  Hint.Range = SourceRange(Tok.getLocation(), Tok.getAnnotationEndLoc());
+
+
+  if (Info->Type.isNot(tok::identifier)) {
+    PP.Diag(Info->Type.getLocation(), diag::err_expected)
+      << tok::identifier << "specify the dfg type!";
+    return false;
+  }
+
+  Hint.PragmaNameLoc = IdentifierLoc::create(Actions.Context,
+                                             Info->Type.getLocation(),
+                                             Info->Type.getIdentifierInfo());
+
+  if (Info->Type.getIdentifierInfo()->isStr("dfg")) {
+    Token Eof;
+    Eof.startToken();
+    Eof.setKind(tok::eof);
+
+    if (Info->OffloadTo.is(tok::unknown)) {
+      Info->OffloadTo.setKind(tok::identifier);
+      Info->OffloadTo.setIdentifierInfo(&PP.getIdentifierTable().get("dedicated"));
+      Info->OffloadTo.setLocation(Tok.getLocation());
+    }
+
+    Hint.Clauses.emplace_back(Info->OffloadTo, nullptr);
+
+    for (auto &Elem : Info->Args) {
+    
+      assert(Elem.first.is(tok::identifier));
+      Eof.setLocation(Elem.second.back().getLocation());
+      Elem.second.push_back(Eof);
+      PP.EnterTokenStream(Elem.second, false, false);
+    
+      assert(Tok.is(tok::eof) || Tok.is(tok::annot_pragma_stream_specialize));
+      ConsumeAnyToken();
+      ExprResult VarExpr = Actions.CorrectDelayedTyposInExpr(ParseAssignmentExpression());
+    
+      if (!VarExpr.isUsable()) {
+        PP.Diag(Tok.getLocation(), diag::err_expected_expression)
+          << "Dependent variable parse failed!\n";
+      }
+    
+      Hint.Clauses.emplace_back(Elem.first, VarExpr.get());
+    
+    }
+  } else if (Info->Type.getIdentifierInfo()->isStr("stream")) {
+
+    if (Info->Args.empty()) {
+      Token SB;
+      SB.startToken();
+      SB.setIdentifierInfo(&PP.getIdentifierTable().get("barrier"));
+      SB.setLocation(Tok.getLocation());
+      Hint.Clauses.emplace_back(SB, nullptr);
+    } else {
+      assert(Info->Args.size() == 1);
+      Hint.Clauses.emplace_back(Info->Args[0].first, nullptr);
+    }
+
+  }
+
+  assert(Tok.is(tok::eof) || Tok.is(tok::annot_pragma_stream_specialize));
+  ConsumeAnyToken(); // Consume the constant expression eof terminator.
+
+  return true;
+>>>>>>> Hack the frontend to fit in ss pragmas
 }

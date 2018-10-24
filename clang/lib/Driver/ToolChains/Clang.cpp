@@ -5303,6 +5303,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_version_EQ);
   }
 
+  // For the 2nd invoking of driver::main
+  if (Args.hasArg(options::OPT_stream_specialize)) {
+    CmdArgs.push_back("-stream-specialize");
+  }
+
   const SanitizerArgs &Sanitize = TC.getSanitizerArgs();
   Sanitize.addArgs(TC, Args, CmdArgs, InputType);
 
