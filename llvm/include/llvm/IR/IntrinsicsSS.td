@@ -1,0 +1,15 @@
+// Intrinsics marks the temporal region scope
+def int_ss_temporal_region_start : Intrinsic<[llvm_ptr_ty],
+                                             [],
+                                             [IntrWillReturn]>;
+def int_ss_temporal_region_end   : Intrinsic<[],
+                                             [llvm_ptr_ty],
+                                             []>;
+
+// Intrinsics marks the DFGs coexist on the CGRA
+def int_ss_config_start : Intrinsic<[llvm_ptr_ty],
+                                    [],
+                                    [IntrWillReturn]>;
+def int_ss_config_end   : Intrinsic<[],
+                                    [llvm_ptr_ty],
+                                    []>;
