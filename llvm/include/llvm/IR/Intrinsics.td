@@ -1571,6 +1571,27 @@ def int_vscale : Intrinsic<[llvm_anyint_ty], [], [IntrNoMem]>;
 
 //===----------------------------------------------------------------------===//
 
+//===------------ Intrinsics for stream specialized processor ------------===//
+
+def int_ssp_stream_config : Intrinsic<[],
+                                      [llvm_ptr_ty],
+                                      []>;
+def int_ssp_stream_end    : Intrinsic<[],
+                                      [llvm_ptr_ty],
+                                      []>;
+def int_ssp_stream_input : Intrinsic<[],
+                                     [llvm_i32_ty, llvm_any_ty],
+                                     []>;
+def int_ssp_stream_load   : Intrinsic<[llvm_any_ty],
+                                      [llvm_i32_ty],
+                                      []>;
+def int_ssp_stream_store  : Intrinsic<[],
+                                      [llvm_any_ty, llvm_i32_ty],
+                                      []>;
+def int_ssp_stream_step   : Intrinsic<[],
+                                      [llvm_i32_ty],
+                                      []>;
+
 //===----------------------------------------------------------------------===//
 // Target-specific intrinsics
 //===----------------------------------------------------------------------===//
