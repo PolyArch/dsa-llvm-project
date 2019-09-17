@@ -44,13 +44,18 @@ def SSP_STREAM_INPUT: RVInstI<0b010, OPC_CUSTOM_0,
                               (outs),
                               (ins simm12:$imm12, GPR:$rs1),
                               "ssp.stream.input", "$imm12, $rs1">;
+let rd = 0, rs1 = 0, imm12 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
+def SSP_STREAM_READY: RVInstI<0b011, OPC_CUSTOM_0, 
+                              (outs),
+                              (ins),
+                              "ssp.stream.ready", "">;
 let rs1 = 0, rd = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
-def SSP_STREAM_STEP : RVInstI<0b011, OPC_CUSTOM_0, 
+def SSP_STREAM_STEP : RVInstI<0b100, OPC_CUSTOM_0, 
                               (outs),
                               (ins simm12:$imm12),
                               "ssp.stream.step", "$imm12">;
 let rs1 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
-def SSP_STREAM_LOAD : RVInstI<0b100, OPC_CUSTOM_0, 
+def SSP_STREAM_LOAD : RVInstI<0b101, OPC_CUSTOM_0, 
                               (outs GPR:$rd),
                               (ins simm12:$imm12),
                               "ssp.stream.load", "$rd, $imm12">;
@@ -71,6 +76,9 @@ def SSPStreamEndPat
 def SSPStreamInputPat
     : Pat<(int_ssp_stream_input simm32:$stream, GPR:$value), 
           (SSP_STREAM_INPUT simm32:$stream, GPR:$value)>;
+def SSPStreamReadyPat
+    : Pat<(int_ssp_stream_ready), 
+          (SSP_STREAM_READY)>;
 def SSPStreamStepPat 
     : Pat<(int_ssp_stream_step simm32:$stream), 
           (SSP_STREAM_STEP simm32:$stream)>;
