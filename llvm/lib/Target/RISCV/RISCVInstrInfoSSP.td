@@ -58,7 +58,18 @@ let rs1 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
 def SSP_STREAM_LOAD : RVInstI<0b101, OPC_CUSTOM_0, 
                               (outs GPR:$rd),
                               (ins simm12:$imm12),
-                              "ssp.stream.load", "$rd, $imm12">;
+                              "ssp.stream.ld", "$rd, $imm12">;
+
+let Predicates = [HasStdExtD] in {
+
+let rs1 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
+def SSP_STREAM_FLOAD : RVInstI<0b110, OPC_CUSTOM_0, 
+                               (outs FPR64:$rd),
+                               (ins simm12:$imm12),
+                               "ssp.stream.fld", "$rd, $imm12">;
+
+}
+
 // let hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
 // def SSP_STREAM_CONFIG : RVInstSSP<0b000, OPC_CUSTOM_0, 
 //                                   (outs),
@@ -85,3 +96,8 @@ def SSPStreamStepPat
 def SSPStreamLoadPat 
     : Pat<(int_ssp_stream_load simm32:$stream), 
           (SSP_STREAM_LOAD simm32:$stream)>;
+let Predicates = [HasStdExtD] in {
+def SSPStreamFLoadPat 
+    : Pat<(int_ssp_stream_load simm32:$stream), 
+          (SSP_STREAM_FLOAD simm32:$stream)>;
+}
