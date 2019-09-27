@@ -29,16 +29,16 @@ class RVInstSSP<bits<3> funct3, RISCVOpcode opcode, dag outs, dag ins,
 //===----------------------------------------------------------------------===//
 
 
-let rd = 0, imm12 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
-def SSP_STREAM_CONFIG : RVInstI<0b000, OPC_CUSTOM_0, 
+let rs1 = 0, rd = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
+def SSP_STREAM_CONFIG: RVInstI<0b000, OPC_CUSTOM_0, 
                                 (outs),
-                                (ins GPR:$rs1),
-                                "ssp.stream.config", "$rs1">;
-let rd = 0, imm12 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
+                                (ins simm12:$imm12),
+                                "ssp.stream.config", "$imm12">;
+let rs1 = 0, rd = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
 def SSP_STREAM_END: RVInstI<0b001, OPC_CUSTOM_0, 
                             (outs),
-                            (ins GPR:$rs1),
-                            "ssp.stream.end", "$rs1">;
+                            (ins simm12:$imm12),
+                            "ssp.stream.end", "$imm12">;
 let rd = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
 def SSP_STREAM_INPUT: RVInstI<0b010, OPC_CUSTOM_0, 
                               (outs),
@@ -55,7 +55,7 @@ def SSP_STREAM_STEP : RVInstI<0b100, OPC_CUSTOM_0,
                               (ins simm12:$imm12),
                               "ssp.stream.step", "$imm12">;
 let rs1 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
-def SSP_STREAM_LOAD : RVInstI<0b101, OPC_CUSTOM_0, 
+def SSP_STREAM_LOAD : RVInstI<0b000, OPC_CUSTOM_1, 
                               (outs GPR:$rd),
                               (ins simm12:$imm12),
                               "ssp.stream.ld", "$rd, $imm12">;
@@ -63,10 +63,16 @@ def SSP_STREAM_LOAD : RVInstI<0b101, OPC_CUSTOM_0,
 let Predicates = [HasStdExtD] in {
 
 let rs1 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
-def SSP_STREAM_FLOAD : RVInstI<0b110, OPC_CUSTOM_0, 
-                               (outs FPR64:$rd),
-                               (ins simm12:$imm12),
-                               "ssp.stream.fld", "$rd, $imm12">;
+def SSP_STREAM_FLD : RVInstI<0b110, OPC_CUSTOM_1, 
+                             (outs FPR64:$rd),
+                             (ins simm12:$imm12),
+                             "ssp.stream.fld", "$rd, $imm12">;
+
+let rs1 = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
+def SSP_STREAM_FLW : RVInstI<0b111, OPC_CUSTOM_1, 
+                             (outs FPR32:$rd),
+                             (ins simm12:$imm12),
+                             "ssp.stream.flw", "$rd, $imm12">;
 
 }
 
@@ -81,23 +87,26 @@ def SSP_STREAM_FLOAD : RVInstI<0b110, OPC_CUSTOM_0,
 //===----------------------------------------------------------------------===//
 
 def SSPStreamConfigPat
-    : Pat<(int_ssp_stream_config GPR:$config), (SSP_STREAM_CONFIG GPR:$config)>;
+    : Pat<(int_ssp_stream_config simm12:$config), (SSP_STREAM_CONFIG simm12:$config)>;
 def SSPStreamEndPat 
-    : Pat<(int_ssp_stream_end GPR:$config), (SSP_STREAM_END GPR:$config)>;
+    : Pat<(int_ssp_stream_end simm12:$config), (SSP_STREAM_END simm12:$config)>;
 def SSPStreamInputPat
-    : Pat<(int_ssp_stream_input simm32:$stream, GPR:$value), 
-          (SSP_STREAM_INPUT simm32:$stream, GPR:$value)>;
+    : Pat<(int_ssp_stream_input simm12:$stream, GPR:$value), 
+          (SSP_STREAM_INPUT simm12:$stream, GPR:$value)>;
 def SSPStreamReadyPat
     : Pat<(int_ssp_stream_ready), 
           (SSP_STREAM_READY)>;
 def SSPStreamStepPat 
-    : Pat<(int_ssp_stream_step simm32:$stream), 
-          (SSP_STREAM_STEP simm32:$stream)>;
+    : Pat<(int_ssp_stream_step simm12:$stream), 
+          (SSP_STREAM_STEP simm12:$stream)>;
 def SSPStreamLoadPat 
-    : Pat<(int_ssp_stream_load simm32:$stream), 
-          (SSP_STREAM_LOAD simm32:$stream)>;
+    : Pat<(int_ssp_stream_load simm12:$stream), 
+          (SSP_STREAM_LOAD simm12:$stream)>;
 let Predicates = [HasStdExtD] in {
-def SSPStreamFLoadPat 
-    : Pat<(int_ssp_stream_load simm32:$stream), 
-          (SSP_STREAM_FLOAD simm32:$stream)>;
+def SSPStreamFLDPat 
+    : Pat<(int_ssp_stream_load simm12:$stream), 
+          (SSP_STREAM_FLD simm12:$stream)>;
+def SSPStreamFLWPat 
+    : Pat<(int_ssp_stream_load simm12:$stream), 
+          (SSP_STREAM_FLW simm12:$stream)>;
 }
