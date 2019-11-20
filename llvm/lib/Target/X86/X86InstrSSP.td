@@ -64,6 +64,26 @@ def SSP_STREAM_LOAD64
          Imm8,
          (outs GR64:$dst),
          (ins i64i8imm:$stream),
-         "ssp.stream.ld\t{$stream, $dst|$dst, $stream}",
+         "ssp.stream.ld64\t{$stream, $dst|$dst, $stream}",
          [(set GR64:$dst, (int_ssp_stream_load i64immSExt8:$stream))]>;
          
+def SSP_STREAM_FLOAD32
+  : ISSP<0x36,
+         MRMXr,
+         Imm8,
+         (outs FR32:$dst),
+         (ins i64i8imm:$stream),
+         "ssp.stream.fld32\t{$stream, $dst|$dst, $stream}",
+         [(set FR32:$dst, (int_ssp_stream_load i64immSExt8:$stream))]>;
+
+class SSP_STREAM_FLOAD128<bits<8> o, ValueType vt>
+  : ISSP<o,
+         MRMXr,
+         Imm8,
+         (outs VR128:$dst),
+         (ins i64i8imm:$stream),
+         "ssp.stream.fld128\t{$stream, $dst|$dst, $stream}",
+         [(set VR128:$dst, (vt (int_ssp_stream_load i64immSExt8:$stream)))]>;
+
+def SSP_STREAM_FLOAD_V4F32 : SSP_STREAM_FLOAD128<0x38, v4f32>;
+def SSP_STREAM_FLOAD_V2F64 : SSP_STREAM_FLOAD128<0x39, v2f64>;
