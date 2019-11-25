@@ -58,32 +58,20 @@ def SSP_STREAM_STEP
          "ssp.stream.step\t{$stream|$stream}",
          [(int_ssp_stream_step i64immSExt8:$stream)]>;
 
-def SSP_STREAM_LOAD64
-  : ISSP<0x35,
-         MRMXr,
-         Imm8,
-         (outs GR64:$dst),
-         (ins i64i8imm:$stream),
-         "ssp.stream.ld64\t{$stream, $dst|$dst, $stream}",
-         [(set GR64:$dst, (int_ssp_stream_load i64immSExt8:$stream))]>;
-         
-def SSP_STREAM_FLOAD32
-  : ISSP<0x36,
-         MRMXr,
-         Imm8,
-         (outs FR32:$dst),
-         (ins i64i8imm:$stream),
-         "ssp.stream.fld32\t{$stream, $dst|$dst, $stream}",
-         [(set FR32:$dst, (int_ssp_stream_load i64immSExt8:$stream))]>;
-
-class SSP_STREAM_FLOAD128<bits<8> o, ValueType vt>
+class SSP_STREAM_LOAD<bits<8> o, RegisterClass rc, ValueType vt, string suffix>
   : ISSP<o,
          MRMXr,
          Imm8,
-         (outs VR128:$dst),
+         (outs rc:$dst),
          (ins i64i8imm:$stream),
-         "ssp.stream.fld128\t{$stream, $dst|$dst, $stream}",
-         [(set VR128:$dst, (vt (int_ssp_stream_load i64immSExt8:$stream)))]>;
+         !strconcat("ssp.stream.ld.", suffix, "\t{$stream, $dst|$dst, $stream}"),
+         [(set rc:$dst, (vt (int_ssp_stream_load i64immSExt8:$stream)))]>;
 
-def SSP_STREAM_FLOAD_V4F32 : SSP_STREAM_FLOAD128<0x38, v4f32>;
-def SSP_STREAM_FLOAD_V2F64 : SSP_STREAM_FLOAD128<0x39, v2f64>;
+def SSP_STREAM_LOAD_I64   : SSP_STREAM_LOAD<0x35, GR64, i64, "i64">;
+def SSP_STREAM_LOAD_F32   : SSP_STREAM_LOAD<0x36, FR32, f32, "f32">;
+def SSP_STREAM_LOAD_F64   : SSP_STREAM_LOAD<0x37, FR64, f64, "f64">;
+def SSP_STREAM_LOAD_V4F32 : SSP_STREAM_LOAD<0x38, VR128, v4f32, "v4f32">;
+def SSP_STREAM_LOAD_V2F64 : SSP_STREAM_LOAD<0x39, VR128, v2f64, "v2f64">;
+def SSP_STREAM_LOAD_V4I32 : SSP_STREAM_LOAD<0x3A, VR128, v4i32, "v4i32">;
+def SSP_STREAM_LOAD_V2I64 : SSP_STREAM_LOAD<0x3B, VR128, v2i64, "v2i64">;
+def SSP_STREAM_LOAD_V4F64 : SSP_STREAM_LOAD<0x3C, VR256, v4f64, "v4f64">;
