@@ -58,7 +58,7 @@ def SSP_STREAM_STEP
          "ssp.stream.step\t{$stream|$stream}",
          [(int_ssp_stream_step i64immSExt8:$stream)]>;
 
-class SSP_STREAM_LOAD<bits<8> o, RegisterClass rc, ValueType vt, string suffix>
+class SSPSTREAMLOAD<bits<8> o, RegisterClass rc, ValueType vt, string suffix>
   : ISSP<o,
          MRMXr,
          Imm8,
@@ -67,11 +67,25 @@ class SSP_STREAM_LOAD<bits<8> o, RegisterClass rc, ValueType vt, string suffix>
          !strconcat("ssp.stream.ld.", suffix, "\t{$stream, $dst|$dst, $stream}"),
          [(set rc:$dst, (vt (int_ssp_stream_load i64immSExt8:$stream)))]>;
 
-def SSP_STREAM_LOAD_I64   : SSP_STREAM_LOAD<0x35, GR64, i64, "i64">;
-def SSP_STREAM_LOAD_F32   : SSP_STREAM_LOAD<0x36, FR32, f32, "f32">;
-def SSP_STREAM_LOAD_F64   : SSP_STREAM_LOAD<0x37, FR64, f64, "f64">;
-def SSP_STREAM_LOAD_V4F32 : SSP_STREAM_LOAD<0x38, VR128, v4f32, "v4f32">;
-def SSP_STREAM_LOAD_V2F64 : SSP_STREAM_LOAD<0x39, VR128, v2f64, "v2f64">;
-def SSP_STREAM_LOAD_V4I32 : SSP_STREAM_LOAD<0x3A, VR128, v4i32, "v4i32">;
-def SSP_STREAM_LOAD_V2I64 : SSP_STREAM_LOAD<0x3B, VR128, v2i64, "v2i64">;
-def SSP_STREAM_LOAD_V4F64 : SSP_STREAM_LOAD<0x3C, VR256, v4f64, "v4f64">;
+class VSSPSTREAMLOAD<bits<8> o, RegisterClass rc, ValueType vt, string suffix>
+  : ISSP<o,
+         MRM0r,
+         Imm8,
+         (outs rc:$dst),
+         (ins i64i8imm:$stream),
+         !strconcat("ssp.stream.ld.", suffix, "\t{$stream, $dst|$dst, $stream}"),
+         [(set rc:$dst, (vt (int_ssp_stream_load i64immSExt8:$stream)))]>,
+    EVEX, EVEX_V512 {
+  Prefix OpPrefix = PS;
+}
+
+def SSP_STREAM_LOAD_I64    : SSPSTREAMLOAD<0x35, GR64, i64, "i64">;
+def SSP_STREAM_LOAD_F32    : SSPSTREAMLOAD<0x36, FR32, f32, "f32">;
+def SSP_STREAM_LOAD_F64    : SSPSTREAMLOAD<0x37, FR64, f64, "f64">;
+def SSP_STREAM_LOAD_V4F32  : SSPSTREAMLOAD<0x38, VR128, v4f32, "v4f32">;
+def SSP_STREAM_LOAD_V2F64  : SSPSTREAMLOAD<0x39, VR128, v2f64, "v2f64">;
+def SSP_STREAM_LOAD_V4I32  : SSPSTREAMLOAD<0x3A, VR128, v4i32, "v4i32">;
+def SSP_STREAM_LOAD_V2I64  : SSPSTREAMLOAD<0x3B, VR128, v2i64, "v2i64">;
+def SSP_STREAM_LOAD_V4F64  : SSPSTREAMLOAD<0x3C, VR256, v4f64, "v4f64">;
+def SSP_STREAM_LOAD_V8I64  : VSSPSTREAMLOAD<0x40, VR512, v8i64, "v8i64">;
+def SSP_STREAM_LOAD_V16I32 : VSSPSTREAMLOAD<0x41, VR512, v16i32, "v16i32">;
