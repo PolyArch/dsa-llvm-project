@@ -81,3 +81,5 @@ bindings/go/llvm/workdir
 .sw?
 #OS X specific files.
 .DS_store
+
+*.patch
