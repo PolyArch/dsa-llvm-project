@@ -281,10 +281,14 @@ struct PragmaAttributeHandler : public PragmaHandler {
 
 struct PragmaMaxTokensHereHandler : public PragmaHandler {
   PragmaMaxTokensHereHandler() : PragmaHandler("max_tokens_here") {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override;
 };
 
 struct PragmaMaxTokensTotalHandler : public PragmaHandler {
   PragmaMaxTokensTotalHandler() : PragmaHandler("max_tokens_total") {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override;
 };
 
 struct PragmaNoStreamSpecializeHandler : public PragmaHandler {
@@ -425,13 +429,12 @@ void Parser::initializePragmaHandlers() {
       std::make_unique<PragmaAttributeHandler>(AttrFactory);
   PP.AddPragmaHandler("clang", AttributePragmaHandler.get());
 
-<<<<<<< HEAD
   MaxTokensHerePragmaHandler = std::make_unique<PragmaMaxTokensHereHandler>();
   PP.AddPragmaHandler("clang", MaxTokensHerePragmaHandler.get());
 
   MaxTokensTotalPragmaHandler = std::make_unique<PragmaMaxTokensTotalHandler>();
   PP.AddPragmaHandler("clang", MaxTokensTotalPragmaHandler.get());
-=======
+
   // For customized pragma we should not constrict its namespace.
   if (getLangOpts().StreamSpecialize) {
     StreamSpecializeHandler = std::make_unique<PragmaStreamSpecializeHandler>();
@@ -439,7 +442,6 @@ void Parser::initializePragmaHandlers() {
     StreamSpecializeHandler = std::make_unique<PragmaNoStreamSpecializeHandler>();
   }
   PP.AddPragmaHandler(StreamSpecializeHandler.get());
->>>>>>> Hack the frontend to fit in ss pragmas
 }
 
 void Parser::resetPragmaHandlers() {
@@ -551,16 +553,14 @@ void Parser::resetPragmaHandlers() {
   PP.RemovePragmaHandler("clang", AttributePragmaHandler.get());
   AttributePragmaHandler.reset();
 
-<<<<<<< HEAD
   PP.RemovePragmaHandler("clang", MaxTokensHerePragmaHandler.get());
   MaxTokensHerePragmaHandler.reset();
 
   PP.RemovePragmaHandler("clang", MaxTokensTotalPragmaHandler.get());
   MaxTokensTotalPragmaHandler.reset();
-=======
+
   PP.RemovePragmaHandler(StreamSpecializeHandler.get());
   StreamSpecializeHandler.reset();
->>>>>>> Hack the frontend to fit in ss pragmas
 }
 
 /// Handle the annotation token produced for #pragma unused(...)
@@ -3560,7 +3560,6 @@ void PragmaAttributeHandler::HandlePragma(Preprocessor &PP,
                       /*DisableMacroExpansion=*/false, /*IsReinject=*/false);
 }
 
-<<<<<<< HEAD
 // Handle '#pragma clang max_tokens 12345'.
 void PragmaMaxTokensHereHandler::HandlePragma(Preprocessor &PP,
                                               PragmaIntroducer Introducer,
@@ -3620,7 +3619,8 @@ void PragmaMaxTokensTotalHandler::HandlePragma(Preprocessor &PP,
   }
 
   PP.overrideMaxTokens(MaxTokens, Loc);
-=======
+}
+
 namespace {
 
 using TokenVec = SmallVector<Token, 0>;
@@ -3888,5 +3888,4 @@ bool Parser::HandlePragmaStreamSpecialize(SSHint &Hint) {
   ConsumeAnyToken(); // Consume the constant expression eof terminator.
 
   return true;
->>>>>>> Hack the frontend to fit in ss pragmas
 }

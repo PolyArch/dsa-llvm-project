@@ -968,10 +968,10 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
           auto E = static_cast<OMPArraySectionExpr*>(SA->getValue());
           auto LB = EmitOMPArraySectionExpr(E, true);
           auto UB = EmitOMPArraySectionExpr(E, false);
-          Emitted[Attr] = std::make_pair(LB.getPointer(), UB.getPointer());
+          Emitted[Attr] = std::make_pair(LB.getPointer(*this), UB.getPointer(*this));
         } else {
           auto LV = EmitLValue(SA->getValue());
-          Emitted[Attr] = std::make_pair(LV.getPointer(), nullptr);
+          Emitted[Attr] = std::make_pair(LV.getPointer(*this), nullptr);
         }
       }
     }

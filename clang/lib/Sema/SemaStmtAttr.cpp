@@ -428,7 +428,7 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
   case ParsedAttr::AT_SSDataStream: {
     std::string Type = "barrier";
     if (A.getNumArgs() != 0)
-      Type = A.getArgAsIdent(0)->Ident->getName();
+      Type = A.getArgAsIdent(0)->Ident->getName().str();
     return SSDataStreamAttr::CreateImplicit(S.Context, Type == "barrier");
   }
   case ParsedAttr::AT_SSDfg:{
