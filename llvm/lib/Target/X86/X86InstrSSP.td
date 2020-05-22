@@ -91,3 +91,17 @@ def SSP_STREAM_LOAD_V8I64  : VSSPSTREAMLOAD<0x40, VR512, v8i64, "v8i64">;
 def SSP_STREAM_LOAD_V16I32 : VSSPSTREAMLOAD<0x41, VR512, v16i32, "v16i32">;
 def SSP_STREAM_LOAD_V8F64  : VSSPSTREAMLOAD<0x42, VR512, v8f64, "v8f64">;
 def SSP_STREAM_LOAD_V16F32 : VSSPSTREAMLOAD<0x43, VR512, v16f32, "v16f32">;
+
+class VSSPSTREAMINPUT<bits<8> o, RegisterClass rc, ValueType vt, string suffix>
+  : ISSP<o,
+         MRM0r,
+         Imm8,
+         (outs),
+         (ins rc:$value, i64i8imm:$stream),
+         !strconcat("ssp.stream.input.", suffix, "\t{$stream, $value|$value, $stream}"),
+         [(int_ssp_stream_input i64immSExt8:$stream, (vt rc:$value))]>,
+    EVEX, EVEX_V512 {
+  Prefix OpPrefix = PS;
+}
+
+def SSP_STREAM_INPUT_V16F32 : VSSPSTREAMINPUT<0x44, VR512, v16f32, "v16f32">;
