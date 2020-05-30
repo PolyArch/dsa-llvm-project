@@ -610,6 +610,10 @@ static void EmitAtomicOp(CodeGenFunction &CGF, AtomicExpr *E, Address Dest,
     Op = llvm::AtomicRMWInst::Add;
     break;
 
+  case AtomicExpr::AO__atomic_fetch_fadd:
+    Op = llvm::AtomicRMWInst::FAdd;
+    break;
+
   case AtomicExpr::AO__atomic_sub_fetch:
     PostOp = llvm::Instruction::Sub;
     LLVM_FALLTHROUGH;
@@ -895,6 +899,7 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
     }
       LLVM_FALLTHROUGH;
   case AtomicExpr::AO__atomic_fetch_add:
+  case AtomicExpr::AO__atomic_fetch_fadd:
   case AtomicExpr::AO__atomic_fetch_sub:
   case AtomicExpr::AO__atomic_add_fetch:
   case AtomicExpr::AO__atomic_sub_fetch:
@@ -938,15 +943,25 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
   LValue AtomicVal = MakeAddrLValue(Ptr, AtomicTy);
   AtomicInfo Atomics(*this, AtomicVal);
 
-  Ptr = Atomics.emitCastToAtomicIntPointer(Ptr);
-  if (Val1.isValid()) Val1 = Atomics.convertToAtomicIntPointer(Val1);
-  if (Val2.isValid()) Val2 = Atomics.convertToAtomicIntPointer(Val2);
-  if (Dest.isValid())
-    Dest = Atomics.emitCastToAtomicIntPointer(Dest);
-  else if (E->isCmpXChg())
+  // Do not cast to int pointer for floating point (fadd).
+  bool ShouldCastToInt = E->getOp() != AtomicExpr::AO__atomic_fetch_fadd;
+  if (ShouldCastToInt) {
+    Ptr = Atomics.emitCastToAtomicIntPointer(Ptr);
+  }
+  if (Val1.isValid() && ShouldCastToInt) Val1 = Atomics.convertToAtomicIntPointer(Val1);
+  if (Val2.isValid() && ShouldCastToInt) Val2 = Atomics.convertToAtomicIntPointer(Val2);
+  if (Dest.isValid()) {
+    if (ShouldCastToInt) {
+      Dest = Atomics.emitCastToAtomicIntPointer(Dest);
+    }
+  } else if (E->isCmpXChg())
     Dest = CreateMemTemp(RValTy, "cmpxchg.bool");
-  else if (!RValTy->isVoidType())
-    Dest = Atomics.emitCastToAtomicIntPointer(Atomics.CreateTempAlloca());
+  else if (!RValTy->isVoidType()) {
+    Dest = Atomics.CreateTempAlloca();
+    if (ShouldCastToInt) {
+      Dest = Atomics.emitCastToAtomicIntPointer(Dest);
+    }
+  }
 
   // Use a library call.  See: http://gcc.gnu.org/wiki/Atomic/GCCMM/LIbrary .
   if (UseLibcall) {
@@ -961,6 +976,7 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
     case AtomicExpr::AO__atomic_fetch_add:
     case AtomicExpr::AO__c11_atomic_fetch_and:
     case AtomicExpr::AO__opencl_atomic_fetch_and:
+    case AtomicExpr::AO__atomic_fetch_fadd:
     case AtomicExpr::AO__atomic_fetch_and:
     case AtomicExpr::AO__c11_atomic_fetch_or:
     case AtomicExpr::AO__opencl_atomic_fetch_or:
@@ -1127,6 +1143,8 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
       AddDirectArgument(*this, Args, UseOptimizedLibcall, Val1.getPointer(),
                         LoweredMemTy, E->getExprLoc(), sizeChars);
       break;
+    case AtomicExpr::AO__atomic_fetch_fadd:
+      llvm_unreachable("__atomic_fetch_fadd has no libcall!");
     // T __atomic_and_fetch_N(T *mem, T val, int order)
     // T __atomic_fetch_and_N(T *mem, T val, int order)
     case AtomicExpr::AO__atomic_and_fetch:
