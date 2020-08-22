@@ -339,7 +339,8 @@ bool LoopIdiomRecognize::runOnLoop(Loop *L) {
 
   // Disable loop idiom recognition if the function's name is a common idiom.
   StringRef Name = L->getHeader()->getParent()->getName();
-  if (Name == "memset" || Name == "memcpy")
+  if (Name == "memset" || Name == "memcpy" || Name == "memcmp" ||
+      Name == "bcmp" || Name == "stream_memset")
     return false;
 
   // Determine if code size heuristics need to be applied.
