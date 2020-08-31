@@ -343,6 +343,10 @@ bool LoopIdiomRecognize::runOnLoop(Loop *L) {
       Name == "bcmp" || Name == "stream_memset" || Name == "stream_memcpy")
     return false;
 
+  // Disable if the function has noloopidom attribute.
+  if (L->getHeader()->getParent()->hasFnAttribute(llvm::Attribute::NoLoopIdiom))
+    return false;
+
   // Determine if code size heuristics need to be applied.
   ApplyCodeSizeHeuristics =
       L->getHeader()->getParent()->hasOptSize() && UseLIRCodeSizeHeurs;

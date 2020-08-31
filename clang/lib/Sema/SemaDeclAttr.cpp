@@ -7377,6 +7377,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case ParsedAttr::AT_CmseNSEntry:
     handleCmseNSEntryAttr(S, D, AL);
     break;
+  case ParsedAttr::AT_NoLoopIdiom:
+    handleSimpleAttribute<NoLoopIdiomAttr>(S, D, AL);
+    break;
   case ParsedAttr::AT_StdCall:
   case ParsedAttr::AT_CDecl:
   case ParsedAttr::AT_FastCall:
