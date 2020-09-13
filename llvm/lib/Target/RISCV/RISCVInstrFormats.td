@@ -91,12 +91,14 @@ class RISCVOpcode<bits<7> val> {
 }
 def OPC_LOAD      : RISCVOpcode<0b0000011>;
 def OPC_LOAD_FP   : RISCVOpcode<0b0000111>;
+def OPC_CUSTOM_0  : RISCVOpcode<0b0001011>;
 def OPC_MISC_MEM  : RISCVOpcode<0b0001111>;
 def OPC_OP_IMM    : RISCVOpcode<0b0010011>;
 def OPC_AUIPC     : RISCVOpcode<0b0010111>;
 def OPC_OP_IMM_32 : RISCVOpcode<0b0011011>;
 def OPC_STORE     : RISCVOpcode<0b0100011>;
 def OPC_STORE_FP  : RISCVOpcode<0b0100111>;
+def OPC_CUSTOM_1  : RISCVOpcode<0b0101011>;
 def OPC_AMO       : RISCVOpcode<0b0101111>;
 def OPC_OP        : RISCVOpcode<0b0110011>;
 def OPC_LUI       : RISCVOpcode<0b0110111>;
@@ -107,10 +109,12 @@ def OPC_NMSUB     : RISCVOpcode<0b1001011>;
 def OPC_NMADD     : RISCVOpcode<0b1001111>;
 def OPC_OP_FP     : RISCVOpcode<0b1010011>;
 def OPC_OP_V      : RISCVOpcode<0b1010111>;
+def OPC_CUSTOM_2  : RISCVOpcode<0b1011011>;
 def OPC_BRANCH    : RISCVOpcode<0b1100011>;
 def OPC_JALR      : RISCVOpcode<0b1100111>;
 def OPC_JAL       : RISCVOpcode<0b1101111>;
 def OPC_SYSTEM    : RISCVOpcode<0b1110011>;
+def OPC_CUSTOM_3  : RISCVOpcode<0b1111011>;
 
 class RVInst<dag outs, dag ins, string opcodestr, string argstr,
              list<dag> pattern, InstFormat format>

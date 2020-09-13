@@ -145,3 +145,6 @@ def ReadFCvtF32ToF64     : SchedRead;
 def ReadFCvtF64ToF32     : SchedRead;
 def ReadFClass32         : SchedRead;
 def ReadFClass64         : SchedRead;
+
+def SSRead  : SchedRead;
+def SSWrite : SchedWrite;

@@ -408,7 +408,7 @@ Address CodeGenFunction::EmitCompoundStmt(const CompoundStmt &S,
 
 void CodeGenFunction::EmitSSCapturedRegion(const CompoundStmt &S,
                                            CodeGenFunction::SSRegionKind Kind) {
-  static llvm::Constant *ScopeIntrin[2][CodeGenFunction::Unknown] = {
+  static llvm::Function *ScopeIntrin[2][CodeGenFunction::Unknown] = {
     {llvm::Intrinsic::getDeclaration(&CGM.getModule(),
                                     llvm::Intrinsic::ss_temporal_region_start),
     llvm::Intrinsic::getDeclaration(&CGM.getModule(),
@@ -420,7 +420,7 @@ void CodeGenFunction::EmitSSCapturedRegion(const CompoundStmt &S,
 
   };
 
-  auto Start = Builder.CreateCall(ScopeIntrin[0][Kind]);
+  auto Start = Builder.CreateCall(ScopeIntrin[0][Kind], {});
   EmitCompoundStmtWithoutScope(S);
   Builder.CreateCall(ScopeIntrin[1][Kind], {Start});
 }

@@ -163,6 +163,7 @@ def : WriteRes<WriteFCvtF64ToI64, []>;
 def : WriteRes<WriteFCvtF32ToI64, []>;
 def : WriteRes<WriteFMovI64ToF64, []>;
 def : WriteRes<WriteFMovF64ToI64, []>;
+def : WriteRes<SSWrite, []>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -224,4 +225,5 @@ def : ReadAdvance<ReadFMovF64ToI64, 0>;
 def : ReadAdvance<ReadFMovI64ToF64, 0>;
 def : ReadAdvance<ReadFClass32, 0>;
 def : ReadAdvance<ReadFClass64, 0>;
+def : ReadAdvance<SSRead, 0>;
 }
