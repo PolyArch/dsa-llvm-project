@@ -413,11 +413,13 @@ CloneLoopBlocks(Loop *L, Value *NewIter, const bool CreateRemainderLoop,
 
       // Do not setLoopAlreadyUnrolled if loop attributes have been defined
       // explicitly.
+      addStringMetadataToLoop(NewLoop, LLVMLoopUnrollIsRemainder);
       return NewLoop;
     }
 
     // Add unroll disable metadata to disable future unrolling for this loop.
     NewLoop->setLoopAlreadyUnrolled();
+    addStringMetadataToLoop(NewLoop, LLVMLoopUnrollIsRemainder);
     return NewLoop;
   }
   else

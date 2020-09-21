@@ -1156,6 +1156,11 @@ static LoopUnrollResult tryToUnrollLoop(
                                         LLVMLoopUnrollFollowupRemainder});
     if (RemainderLoopID.hasValue())
       RemainderLoop->setLoopID(RemainderLoopID.getValue());
+    /**
+     * ! GemForge
+     * Mark llvm.loop.unroll.remainder.
+     */
+    addStringMetadataToLoop(RemainderLoop, LLVMLoopUnrollIsRemainder);
   }
 
   if (UnrollResult != LoopUnrollResult::FullyUnrolled) {

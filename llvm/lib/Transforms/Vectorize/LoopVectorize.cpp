@@ -165,6 +165,8 @@ static const char *const LLVMLoopVectorizeFollowupVectorized =
     "llvm.loop.vectorize.followup_vectorized";
 static const char *const LLVMLoopVectorizeFollowupEpilogue =
     "llvm.loop.vectorize.followup_epilogue";
+static const char *const LLVMLoopVectorizeIsEpilogue =
+    "llvm.loop.vectorize_is_epilogue";
 /// @}
 
 STATISTIC(LoopsVectorized, "Number of loops vectorized");
@@ -8531,6 +8533,12 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     // Mark the loop as already vectorized to avoid vectorizing again.
     Hints.setAlreadyVectorized();
   }
+
+  /**
+   * ! GemForge
+   * Mark the epilogue loop
+   */
+  addStringMetadataToLoop(L, LLVMLoopVectorizeIsEpilogue);
 
   assert(!verifyFunction(*L->getHeader()->getParent(), &dbgs()));
   return true;

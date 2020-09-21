@@ -43,6 +43,8 @@ const char *const LLVMLoopUnrollFollowupUnrolled =
     "llvm.loop.unroll.followup_unrolled";
 const char *const LLVMLoopUnrollFollowupRemainder =
     "llvm.loop.unroll.followup_remainder";
+// Avoid llvm.loop.unroll prefix as it would be removed once unrolled.
+const char *const LLVMLoopUnrollIsRemainder = "llvm.loop.unroll_is_remainder";
 /// @}
 
 const Loop* addClonedBlockToLoopInfo(BasicBlock *OriginalBB,
