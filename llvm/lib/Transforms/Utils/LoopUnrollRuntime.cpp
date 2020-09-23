@@ -359,9 +359,16 @@ CloneLoopBlocks(Loop *L, Value *NewIter, const bool CreateRemainderLoop,
         PHINode *NewIdx = PHINode::Create(NewIter->getType(), 2,
                                           suffix + ".iter",
                                           FirstLoopBB->getFirstNonPHI());
+        /**
+         * ! GemForge
+         * We should be able to say this is nsw/nuw?
+         * Ideally we would like to copy nsw/nuw from the original add instruction.
+         */
+        bool HasNSW = true;
+        bool HasNUW = true;
         Value *IdxSub =
             Builder.CreateSub(NewIdx, ConstantInt::get(NewIdx->getType(), 1),
-                              NewIdx->getName() + ".sub");
+                              NewIdx->getName() + ".sub", HasNUW, HasNSW);
         Value *IdxCmp =
             Builder.CreateIsNotNull(IdxSub, NewIdx->getName() + ".cmp");
         Builder.CreateCondBr(IdxCmp, FirstLoopBB, InsertBot);
@@ -931,9 +938,16 @@ bool llvm::UnrollRuntimeLoopRemainder(
     B2.SetInsertPoint(LatchBR);
     PHINode *NewIdx = PHINode::Create(TestVal->getType(), 2, "niter",
                                       Header->getFirstNonPHI());
+    /**
+     * ! GemForge
+     * We should be able to say this is nsw/nuw?
+     * Ideally we would like to copy nsw/nuw from the original add instruction.
+     */
+    bool HasNSW = true;
+    bool HasNUW = true;
     Value *IdxSub =
         B2.CreateSub(NewIdx, ConstantInt::get(NewIdx->getType(), 1),
-                     NewIdx->getName() + ".nsub");
+                     NewIdx->getName() + ".nsub", HasNUW, HasNSW);
     Value *IdxCmp;
     if (LatchBR->getSuccessor(0) == Header)
       IdxCmp = B2.CreateIsNotNull(IdxSub, NewIdx->getName() + ".ncmp");
