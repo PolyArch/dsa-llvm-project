@@ -1576,28 +1576,28 @@ def int_vscale : Intrinsic<[llvm_anyint_ty], [], [IntrNoMem]>;
 // Start configuration.
 def int_ssp_stream_config : Intrinsic<[],
                                       [llvm_i64_ty],
-                                      []>;
+                                      [IntrWillReturn]>;
 // Input value.
 def int_ssp_stream_input  : Intrinsic<[],
                                       [llvm_i64_ty, llvm_any_ty],
-                                      []>;
+                                      [IntrWillReturn]>;
 // Mark the end of configuration.
 def int_ssp_stream_ready  : Intrinsic<[],
                                       [],
-                                      []>;
+                                      [IntrWillReturn]>;
 // Terminate all the stream.
 def int_ssp_stream_end    : Intrinsic<[],
                                       [llvm_i64_ty],
-                                      []>;
+                                      [IntrWillReturn]>;
 def int_ssp_stream_load   : Intrinsic<[llvm_any_ty],
                                       [llvm_i64_ty],
-                                      []>;
+                                      [IntrWillReturn]>;
 def int_ssp_stream_store  : Intrinsic<[],
                                       [llvm_any_ty, llvm_i64_ty],
-                                      []>;
+                                      [IntrWillReturn]>;
 def int_ssp_stream_step   : Intrinsic<[],
                                       [llvm_i64_ty],
-                                      []>;
+                                      [IntrWillReturn]>;
 
 //===----------------------------------------------------------------------===//
 // Target-specific intrinsics
