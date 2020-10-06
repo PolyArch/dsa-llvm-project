@@ -745,7 +745,7 @@ void Predicate::EmitCond(std::ostringstream &os) {
     if (CtrlBit.Pred == this)
       os << ", self=";
     else
-      os << ", control=" << CtrlBit.Pred->NameInDfg(-1);
+      os << ", ctrl=" << CtrlBit.Pred->NameInDfg(-1);
     os << "{" << CtrlBit.finalize() << "}";
   }
 
