@@ -819,7 +819,7 @@ void ComputeBody::EmitCB(std::ostringstream &os) {
       if (getPredicate())
         CtrlBit.updateAbstain(getAbstainBit(), false);
       if (!CtrlBit.empty()) {
-        os << ", control=" << CtrlBit.Pred->NameInDfg(vec) << "{" << CtrlBit.finalize() << "}";
+        os << ", ctrl=" << CtrlBit.Pred->NameInDfg(vec) << "{" << CtrlBit.finalize() << "}";
       }
     }
 
@@ -861,12 +861,12 @@ void Accumulator::EmitCB(std::ostringstream &os) {
   if (Parent->Parent->Query->MF.PRED) {
     if (P || !CtrlBit.empty()) {
       CtrlBit.updateAbstain(this->getAbstainBit(), true);
-      os << "control=" << P->NameInDfg(-1) << "{" << CtrlBit.finalize() << "}";
+      os << "ctrl=" << P->NameInDfg(-1) << "{" << CtrlBit.finalize() << "}";
     } else {
       os << Ctrl->NameInDfg();
     }
   } else {
-    os << "control=" << Ctrl->NameInDfg() << "{2:d}";
+    os << "ctrl=" << Ctrl->NameInDfg() << "{2:d}";
   }
 
   os << ")\n";
@@ -1450,8 +1450,10 @@ void AtomicPortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
   } else {
     OperandPort = Parent->getNextReserved();
     uint64_t CI = stoul(ValueToOperandText(Operand));
+    int DBits = this->Store->getValueOperand()->getType()->getScalarSizeInBits();
     createAssembleCall(IB->getVoidTy(), "ss_const $0, $1, $2", "r,r,i",
-                       {IB->getInt64(CI), TripCnt, IB->getInt64(OperandPort | (1 << 8))},
+                       {IB->getInt64(CI), TripCnt,
+                        IB->getInt64(OperandPort | ((TBits(DBits) + 1) << 9))},
                        Parent->DefaultIP());
   }
 
@@ -1459,19 +1461,20 @@ void AtomicPortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
   int DBits = this->Store->getValueOperand()->getType()->getScalarSizeInBits();
 
   auto TImm = IB->getInt64((TBits(DBits) << 4) | (TBits(DBits) << 2) | TBits(IBits));
-  createAssembleCall(IB->getVoidTy(), "ss_cfg_atom_op t0, t0, $0", "i", {TImm},
+  auto NumUpdates = IB->getInt64(1);
+  auto TupleLen = IB->getInt64(1);
+  createAssembleCall(IB->getVoidTy(), "ss_cfg_atom_op $0, $1, $2", "r,r,i",
+                     {TupleLen, NumUpdates, TImm},
                      Parent->DefaultIP());
   Meta.set("src", dsa::dfg::MetaPort::DataText[(int) ActualSrc]);
   Meta.set("dest", "spad");
   Meta.set("op", "atomic");
   // FIXME: offset is not always 0
-  uint64_t Combine = (SoftPortNum << 7) | (OperandPort << 2) | OpCode;
-  if (Combine >> 11) {
-    Combine |= ~((1 << 11ull) - 1);
-  }
-  auto PortImm = IB->getInt64(Combine);
+  uint32_t OffsetList = 0;
+  auto AddrPort = IB->getInt64(OffsetList | (SoftPortNum << 24));
+  auto ValuePort = IB->getInt64((OperandPort << 2) | ((int) OpCode));
   createAssembleCall(IB->getVoidTy(), "ss_atom_op $0, $1, $2", "r,r,i",
-                     {IB->getInt64(8), TripCnt, PortImm},
+                     {AddrPort, TripCnt, ValuePort},
                      Parent->DefaultIP());
 
   IntrinInjected = true;
