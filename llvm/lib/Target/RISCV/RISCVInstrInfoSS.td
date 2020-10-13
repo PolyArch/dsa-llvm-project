@@ -16,7 +16,7 @@ def SS_CFG_PORT : RVInstS<0, OPC_CUSTOM_0,
                           Sched<[SSRead, SSWrite]>;
 
 let rd = 0, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
-def SS_CFG : RVInstI<1, OPC_CUSTOM_0,
+def SS_CFG : RVInstI<2, OPC_CUSTOM_0,
                      (outs),
                      (ins simm12:$simm12, GPR:$rs1),
                      "ss_cfg", "$rs1, $simm12">,
