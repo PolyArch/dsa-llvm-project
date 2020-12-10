@@ -1,4 +1,3 @@
-CORES=8
 mkdir build-debug
 cd build-debug
 
