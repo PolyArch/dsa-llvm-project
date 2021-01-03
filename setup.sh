@@ -1,4 +1,4 @@
-mkdir build-debug
+mkdir -p build-debug
 cd build-debug
 
 cmake -G "Unix Makefiles" \
@@ -15,7 +15,7 @@ cmake -G "Unix Makefiles" \
 make install -j $CORES
 cd ..
 
-mkdir build-release
+mkdir -p build-release
 cd build-release
 cmake -G "Unix Makefiles" \
 -DLLVM_TARGETS_TO_BUILD="X86" \
@@ -31,7 +31,7 @@ cmake -G "Unix Makefiles" \
 make install -j $CORES
 cd ..
 
-mkdir build-omp-x86-static
+mkdir -p build-omp-x86-static
 cd build-omp-x86-static
 cmake \
 -DCMAKE_BUILD_TYPE=Release \

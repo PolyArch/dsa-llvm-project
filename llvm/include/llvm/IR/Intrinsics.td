@@ -1589,12 +1589,15 @@ def int_ssp_stream_ready  : Intrinsic<[],
 def int_ssp_stream_end    : Intrinsic<[],
                                       [llvm_i64_ty],
                                       [IntrWillReturn]>;
+// Move a value from core SE to registers.
 def int_ssp_stream_load   : Intrinsic<[llvm_any_ty],
                                       [llvm_i64_ty],
                                       [IntrWillReturn]>;
+// Placeholder for core SE stores (value computed by core SE).
 def int_ssp_stream_store  : Intrinsic<[],
-                                      [llvm_any_ty, llvm_i64_ty],
+                                      [llvm_i64_ty],
                                       [IntrWillReturn]>;
+// Steps a stream.
 def int_ssp_stream_step   : Intrinsic<[],
                                       [llvm_i64_ty],
                                       [IntrWillReturn]>;
