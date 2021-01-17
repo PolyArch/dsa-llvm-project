@@ -113,3 +113,16 @@ def SSP_STREAM_STORE
          (ins i64i8imm:$stream),
          "ssp.stream.store\t{$stream|$stream}",
          [(int_ssp_stream_store i64immSExt8:$stream)]>;
+
+class SSPSTREAMATOMIC<bits<8> o, RegisterClass rc, ValueType vt, string suffix>
+  : ISSP<o,
+         MRMXr,
+         Imm8,
+         (outs rc:$dst),
+         (ins i64i8imm:$stream),
+         !strconcat("ssp.stream.amo.", suffix, "\t{$stream, $dst|$dst, $stream}"),
+         [(set rc:$dst, (vt (int_ssp_stream_atomic i64immSExt8:$stream)))]>;
+
+def SSP_STREAM_ATOMIC_I64: SSPSTREAMATOMIC<0x40, GR64, i64, "i64">;
+def SSP_STREAM_ATOMIC_F32: SSPSTREAMATOMIC<0x41, FR32, f32, "f32">;
+def SSP_STREAM_ATOMIC_F64: SSPSTREAMATOMIC<0x42, FR64, f64, "f64">;

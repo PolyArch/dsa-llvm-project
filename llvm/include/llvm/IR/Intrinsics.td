@@ -1597,6 +1597,10 @@ def int_ssp_stream_load   : Intrinsic<[llvm_any_ty],
 def int_ssp_stream_store  : Intrinsic<[],
                                       [llvm_i64_ty],
                                       [IntrWillReturn]>;
+// Move a value from core SE to registers.
+def int_ssp_stream_atomic : Intrinsic<[llvm_any_ty],
+                                      [llvm_i64_ty],
+                                      [IntrWillReturn]>;
 // Steps a stream.
 def int_ssp_stream_step   : Intrinsic<[],
                                       [llvm_i64_ty],
