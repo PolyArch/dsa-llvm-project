@@ -26,13 +26,73 @@
 #include "Transformation.h"
 #include "Util.h"
 
-//#include "dsa/arch/model.h"
+#include "dsa/rf.h"
+#include "dsa/spec.h"
 //#include "dsa/mapper/scheduler.h"
 //#include "dsa/mapper/scheduler_sa.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "stream-specialize"
+
+namespace dsa {
+namespace inject {
+
+IRBuilder<> *DSAIntrinsicEmitter::REG::IB = nullptr;
+
+MemoryType
+InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
+                   MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
+  DSAIntrinsicEmitter DIE(IB);
+  Value *Start = std::get<0>(Stream.Dimensions.back());
+  Value *Bytes = std::get<1>(Stream.Dimensions.back());
+  if (Stream.Dimensions.size() == 1) {
+    DIE.INSTANTIATE_1D_STREAM(Start, Bytes, PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
+    return DMT_DMA;
+  } else if (Stream.Dimensions.size() == 2) {
+    Value *Stride = std::get<0>(Stream.Dimensions[0]);
+    Value *N = std::get<1>(Stream.Dimensions[0]);
+    int Stretch = std::get<2>(Stream.Dimensions[0]);
+    llvm_unreachable("Not supported yet!");
+  }
+
+  // Value *Start = std::get<0>(Stream.Dimensions.back());
+  // Value *N = std::get<1>(Stream.Dimensions.back());
+  // Value *Port = createConstant(getCtx(), PortNum << 1);
+
+  // for (int i = 0; i < ((int) Stream.Dimensions.size()) - 1; ++i) {
+  //   Value* Stride = std::get<0>(Stream.Dimensions[i]);
+  //   Value* N = std::get<1>(Stream.Dimensions[i]);
+  //   Value* Stretch = createConstant(getCtx(), (std::get<2>((Stream.Dimensions[i])) << 1) | 1);
+  //   createAssembleCall(VoidTy, AsmStr, "r,r,i", {Stride, N, Stretch}, InsertBefore);
+  // }
+
+  // dsa::dfg::MetaPort::Data Res = dsa::dfg::MetaPort::Data::Memory;
+  // // FIXME: I am not sure if it is a good hack. I replace "dma" by "scr".
+  // //        I would like a more systemaic way to do it.
+  // if (Parent->AddrsOnSpad.count(Start)) {
+  //   for (size_t i = 0; i < AsmStr.size(); ++i) {
+  //     if (std::string(AsmStr.begin() + i, AsmStr.begin() + i + 3) == "dma") {
+  //       AsmStr[i] = 's';
+  //       AsmStr[i + 1] = 'c';
+  //       AsmStr[i + 2] = 'r';
+  //       Res = dsa::dfg::MetaPort::Data::SPad;
+  //       break;
+  //     }
+  //   }
+  //   Start = Parent->AddrsOnSpad[Start];
+  // }
+
+  // createAssembleCall(VoidTy, AsmStr, "r,r,i", {Start, N, Port}, InsertBefore);
+
+  // LLVM_DEBUG(dbgs() << "\nIntrinsics injected for " << PortNum << " !!\n\n");
+  llvm_unreachable("Unsupported stream dimension");
+}
+
+}
+}
+
+
 
 /// Check if a given SCEV is loop invariant
 bool CheckLoopInvariant(const SCEV *S, int From, const SmallVector<Loop*, 0> &LoopNest,
@@ -173,10 +233,10 @@ bool DedicatedDfg::ConsumedByAccumulator(MemPort *MP) {
 
 int ScalarBits2T(int Bits) {
   switch (Bits) {
-  case 64: return 0;
-  case 32: return 1;
-  case 16: return 2;
-  case 8: return 3;
+    case 64: return 0;
+    case 32: return 1;
+    case 16: return 2;
+    case 8: return 3;
   }
   assert(false);
 }
@@ -207,8 +267,8 @@ void DfgFile::InjectStreamIntrinsics() {
     }
   }
 
-
-  createAssembleCall(IB->getVoidTy(), "ss_wait t0, t0, 0", "~{memory}", {}, Fence);
+  IB->SetInsertPoint(Fence);
+  dsa::inject::DSAIntrinsicEmitter(IB).SS_WAIT_ALL();
 
 }
 
@@ -233,7 +293,7 @@ Instruction *DfgBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
   } else if (AR.PT == AnalyzedRepeat::StretchedRepeat) {
     assert(AR.Prime->getSCEVType() == scAddRecExpr);
     auto SARE = dyn_cast<SCEVAddRecExpr>(AR.Prime);
-    auto BT = 
+    auto BT =
       Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()), nullptr, DefaultIP());
     auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr, DefaultIP());
     assert(isa<ConstantInt>(SV));
@@ -245,7 +305,7 @@ Instruction *DfgBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
     assert(AR.Prime->getSCEVType() == scAddRecExpr);
     auto SARE = dyn_cast<SCEVAddRecExpr>(AR.Prime);
     auto First = Expander.expandCodeFor(SARE->getStart(), nullptr, DefaultIP());
-    auto BT = 
+    auto BT =
       Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()), nullptr, DefaultIP());
     auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr, DefaultIP());
     assert(isa<ConstantInt>(SV));
@@ -254,31 +314,31 @@ Instruction *DfgBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
     auto Last = IB->CreateAdd(First, IB->CreateMul(BT, SV));
 
     switch (getUnroll()) {
-    case 1: {
-      // (First + Last) * (BT + 1) / 2
-      auto Prime = IB->CreateUDiv(IB->CreateMul(IB->CreateAdd(First, Last), IB->CreateAdd(BT, One)),
-                                  createConstant(getCtx(), 2));
-      return InjectRepeat(Prime, AR.Wrapped, /*I am not sure if put 0 here is correct*/0,
-                          Val, Port);
-    }
-    case 2: {
-      Value *Range;
-      if (SVInt == -1) {
-        //FIXME: Support last != 0 case later.
-        auto F2 = IB->CreateAdd(First, IB->getInt64(2));
-        auto FF = IB->CreateUDiv(IB->CreateMul(F2, F2), createConstant(getCtx(), 4));
-        Range = FF;
-      } else {
-        assert(false && "Not supported yet...");
+      case 1: {
+        // (First + Last) * (BT + 1) / 2
+        auto Prime = IB->CreateUDiv(IB->CreateMul(IB->CreateAdd(First, Last), IB->CreateAdd(BT, One)),
+                                    createConstant(getCtx(), 2));
+        return InjectRepeat(Prime, AR.Wrapped, /*I am not sure if put 0 here is correct*/0,
+                            Val, Port);
       }
-      Range = IB->CreateShl(Range, 1);
-      return InjectRepeat(Range, AR.Wrapped, /*Same as above*/0, Val, Port);
+      case 2: {
+        Value *Range;
+        if (SVInt == -1) {
+          //FIXME: Support last != 0 case later.
+          auto F2 = IB->CreateAdd(First, IB->getInt64(2));
+          auto FF = IB->CreateUDiv(IB->CreateMul(F2, F2), createConstant(getCtx(), 4));
+          Range = FF;
+        } else {
+          assert(false && "Not supported yet...");
+        }
+        Range = IB->CreateShl(Range, 1);
+        return InjectRepeat(Range, AR.Wrapped, /*Same as above*/0, Val, Port);
+      }
+      default: {
+        llvm_unreachable("Not supported vectorization width");
+      }
     }
-    default: {
-      llvm_unreachable("Not supported vectorization width");
-    }
-    }
-    assert(false && "Not supported yet...");
+    llvm_unreachable("Not supported yet...");
     return nullptr;
   }
 
@@ -296,65 +356,19 @@ Instruction *DfgBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch
   auto VectorizedStretch = IB.CreateSDiv(ShiftedStretch, UnrollConstant());
   auto ActualStretch = IB.CreateShl(VectorizedStretch, 1);
 
+  dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr);
   if (Val ==  nullptr) {
-    return createAssembleCall(VoidTy, "ss_cfg_port $0, t0, $1", "r,i",
-                              {ComputeRepeat(Prime, Wrapper, true, true), ActualStretch}, IP);
+    DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Prime);
+    return DIE.res.back();
   } else {
     LLVM_DEBUG(dbgs() << "Inject Repeat: "; Val->dump();
-               dbgs() << "For port: ");
-    if (auto Load = dyn_cast<LoadInst>(Val)) {
-      Value *PortImm = createConstant(getCtx(), Port << 1);
-      Value *Size = createConstant(getCtx(), Load->getType()->getScalarSizeInBits() / 8);
-      createAssembleCall(VoidTy, "ss_cfg_port $0, t0, $1", "r,i",
-                        {ComputeRepeat(Prime, Wrapper, true, true), ActualStretch}, IP);
-      return createAssembleCall(VoidTy, "ss_dma_rd $0, $1, $2", "r,r,i",
-                                {Load->getPointerOperand(), Size, PortImm}, IP);
-    }
-    //assert(Port != -1);
-    return createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r, r, i",
-                              {Val, ComputeRepeat(Prime, Wrapper, true, false), IB.getInt64(Port)},
-                              IP);
+               dbgs() << "For port: " << Port);
+    assert(Port != -1);
+    DIE.SS_CONST(Port, Val,
+                 /*Times=*/ComputeRepeat(Prime, Wrapper, true, false),
+                 /*Const Type*/Val->getType()->getScalarSizeInBits() / 8);
+    return DIE.res.back();
   }
-}
-
-dsa::dfg::MetaPort::Data
-DfgBase::InjectStreamIntrin(int PortNum, std::string AsmStr,
-                            const AnalyzedStream &Stream) {
-
-  Instruction *InsertBefore = DefaultIP();
-  auto VoidTy = Type::getVoidTy(getCtx());
-
-  for (int i = 0; i < ((int) Stream.Dimensions.size()) - 1; ++i) {
-    Value* Stride = std::get<0>(Stream.Dimensions[i]);
-    Value* N = std::get<1>(Stream.Dimensions[i]);
-    Value* Stretch = createConstant(getCtx(), (std::get<2>((Stream.Dimensions[i])) << 1) | 1);
-    createAssembleCall(VoidTy, AsmStr, "r,r,i", {Stride, N, Stretch}, InsertBefore);
-  }
-
-  Value *Start = std::get<0>(Stream.Dimensions.back());
-  Value *N = std::get<1>(Stream.Dimensions.back());
-  Value *Port = createConstant(getCtx(), PortNum << 1);
-
-  dsa::dfg::MetaPort::Data Res = dsa::dfg::MetaPort::Data::Memory;
-  // FIXME: I am not sure if it is a good hack. I replace "dma" by "scr".
-  //        I would like a more systemaic way to do it.
-  if (Parent->AddrsOnSpad.count(Start)) {
-    for (size_t i = 0; i < AsmStr.size(); ++i) {
-      if (std::string(AsmStr.begin() + i, AsmStr.begin() + i + 3) == "dma") {
-        AsmStr[i] = 's';
-        AsmStr[i + 1] = 'c';
-        AsmStr[i + 2] = 'r';
-        Res = dsa::dfg::MetaPort::Data::SPad;
-        break;
-      }
-    }
-    Start = Parent->AddrsOnSpad[Start];
-  }
-
-  createAssembleCall(VoidTy, AsmStr, "r,r,i", {Start, N, Port}, InsertBefore);
-
-  LLVM_DEBUG(dbgs() << "\nIntrinsics injected for " << PortNum << " !!\n\n");
-  return Res;
 }
 
 DfgBase *DfgBase::BelongOtherDFG(Instruction *I) {
@@ -979,7 +993,7 @@ void DataMoveDfg::InitEntries() {
 void TemporalDfg::InitEntries() {
   std::set<Instruction*> Visited;
   assert(getBlocks().size() == 1);
-  
+
   InstsToEntries(make_range(Begin, End), Visited);
 
   for (auto Inst : Visited) {
@@ -1126,7 +1140,7 @@ void DfgBase::ReorderEntries() {
         }
       }
       if (auto Pred = dyn_cast<Predicate>(Entries[i])) {
-        for (auto Cond : Pred->Cond) 
+        for (auto Cond : Pred->Cond)
           Ready.insert(Cond);
       }
     } else {
@@ -1348,12 +1362,12 @@ void DfgFile::EmitAndScheduleDfg() {
 
   auto APConfigSize = APInt(64, ConfigSize);
   auto ConstConfig = Constant::getIntegerValue(Type::getInt64Ty(getCtx()), APConfigSize);
-  SmallVector<Value*, 2> Args{GV, ConstConfig};
-  auto ConfigIntrin = createAssembleCall(VoidTy, "ss_cfg $0, $1", "r,i", Args,
-                                         Config);
 
-  LLVM_DEBUG(dbgs() << "Inject config asm "; ConfigIntrin->dump());
-
+  auto IB = Query->IBPtr;
+  IB->SetInsertPoint(Config);
+  dsa::inject::DSAIntrinsicEmitter DIE(IB);
+  DIE.SS_CONFIG(GV, ConstConfig);
+  LLVM_DEBUG(dbgs() << "Inject config asm "; DIE.res.back()->dump());
 }
 
 void DfgFile::EraseOffloadedInstructions() {
@@ -1411,7 +1425,6 @@ void DfgFile::EraseOffloadedInstructions() {
     }
 
     if (auto DD = dyn_cast<DedicatedDfg>(DFG)) {
-      
       auto StreamMD = GetUnrollMetadata(DD->LoopNest.back()->getLoopID(), "llvm.loop.ss.stream");
       auto BarrierMD = dyn_cast<ConstantAsMetadata>(StreamMD->getOperand(1));
       if (BarrierMD->getValue()->getUniqueInteger().getSExtValue()) {
@@ -1427,12 +1440,15 @@ void DfgFile::EraseOffloadedInstructions() {
             }
           }
           if (isa<PHINode>(I) || Found) {
-            createAssembleCall(VoidTy, "ss_wait t0, t0, 0", "~{memory}", {},
-                               I->getNextNode());
+            auto IB = Query->IBPtr;
+            IB->SetInsertPoint(I->getNextNode());
+            dsa::inject::DSAIntrinsicEmitter(IB).SS_WAIT_ALL();
             break;
           }
           if (I == &I->getParent()->front()) {
-            createAssembleCall(VoidTy, "ss_wait t0, t0, 0", "~{memory}", {}, I);
+            auto IB = Query->IBPtr;
+            IB->SetInsertPoint(I);
+            dsa::inject::DSAIntrinsicEmitter(IB).SS_WAIT_ALL();
             break;
           }
         }
@@ -1692,8 +1708,6 @@ DedicatedDfg::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
       if (!SE->isLoopInvariant(BackTaken, LoopNest[i + 1])) {
         assert(CheckLoopInvariant(BackTaken, i + 2, LoopNest, SE));
       }
-      if (auto SAE = dyn_cast<SCEVAddExpr>(BackTaken)) {
-      }
       auto BackTaken_ = dyn_cast<SCEVAddRecExpr>(BackTaken);
       assert(BackTaken_);
       auto Cnt = Expander.expandCodeFor(BackTaken_->getStart(), nullptr, InsertBefore);
@@ -1786,13 +1800,13 @@ Value *AnalyzedStream::BytesFromMemory(IRBuilder<> *IB) {
   return Res;
 }
 
-DataMoveDfg::DataMoveDfg(DfgFile *Parent_, Loop *LI, int Unroll) : 
+DataMoveDfg::DataMoveDfg(DfgFile *Parent_, Loop *LI, int Unroll) :
   DedicatedDfg(Parent_, LI, Unroll) {
   Kind = DfgBase::DataMove;
 }
 
 Value *DfgBase::UnrollConstant() {
-  return createConstant(getCtx(), getUnroll());
+  return Parent->Query->IBPtr->getInt64(getUnroll());
 }
 
 
@@ -1811,7 +1825,7 @@ void AddDfg(DfgFile *DF, MDNode *Ptr, Loop *LI) {
   auto MDFactor = dyn_cast<ConstantAsMetadata>(Ptr->getOperand(1));
   assert(MDFactor);
   int Factor =(int) MDFactor->getValue()->getUniqueInteger().getSExtValue();
-  DF->addDfg(new DfgType(DF, LI, Factor)); 
+  DF->addDfg(new DfgType(DF, LI, Factor));
 }
 
 DfgFile::DfgFile(StringRef Name, Function &F, IntrinsicInst *Start, IntrinsicInst *End,
@@ -2025,7 +2039,6 @@ void DfgFile::InspectSPADs() {
     }
 
   }
-  
 
   for (auto Inst : ToInject) {
     if (isa<ReturnInst>(Inst)) {

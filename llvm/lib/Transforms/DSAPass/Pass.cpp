@@ -29,12 +29,12 @@ void EliminateTemporal(Function &F) {
       if (!Intrin)
         continue;
       switch (Intrin->getIntrinsicID()) {
-      case Intrinsic::ss_temporal_region_start:
-      case Intrinsic::ss_temporal_region_end:
-        ToRemove.push_back(Intrin);
-        break;
-      default:
-        break;
+        case Intrinsic::ss_temporal_region_start:
+        case Intrinsic::ss_temporal_region_end:
+          ToRemove.push_back(Intrin);
+          break;
+        default:
+          break;
       }
     }
   }
@@ -144,11 +144,10 @@ void StreamSpecialize::HandleMemIntrin(Function &F) {
     AS1.Dimensions.emplace_back(Src, Size, 0);
 
     IntrinDfg Dfg(Dummy, Intrin);
-
-    Dfg.InjectStreamIntrin(MemScrPort, "ss_dma_rd $0, $1, $2", AS1);
-    Dfg.InjectStreamIntrin(MemScrPort, "ss_wr_dma $0, $1, $2", AS0);
-    createAssembleCall(IBPtr->getVoidTy(), "ss_wait t0, t0, 0", "~{memory}", {}, Dfg.DefaultIP());
-    //Intrin->replaceAllUsesWith(UndefValue::get(Intrin->getType()));
+    IBPtr->SetInsertPoint(Dfg.DefaultIP());
+    dsa::inject::InjectLinearStream(IBPtr, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
+    dsa::inject::InjectLinearStream(IBPtr, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
+    dsa::inject::DSAIntrinsicEmitter(IBPtr).SS_WAIT(~0ull);
     Intrin->eraseFromParent();
   }
 

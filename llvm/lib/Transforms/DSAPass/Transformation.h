@@ -1,5 +1,4 @@
-#ifndef STREAM_SPECIALIZE_DFG_H_
-#define STREAM_SPECIALIZE_DFG_H_
+#pragma once
 
 #include <map>
 #include <memory>
@@ -8,12 +7,16 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include "Util.h"
 #include "DfgEntry.h"
 #include "Pass.h"
+
+#include "dsa/rf.h"
+#include "dsa/spec.h"
 
 using namespace llvm;
 
@@ -148,11 +151,6 @@ public:
                             int Port = -1);
 
   DfgKind getKind() const;
-
-  /// Inject stream intrinsics
-  /// Returns the actual data source, since it will implicitly transfer to SPAD
-  dsa::dfg::MetaPort::Data InjectStreamIntrin(int Port, std::string AsmStr,
-                                 const AnalyzedStream& Stream);
 
   /// Analyze data stream
   virtual AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes) {
@@ -394,4 +392,86 @@ class IntrinDfg : public DfgBase {
   bool InThisScope(Instruction *I) override;
 };
 
-#endif
+namespace dsa {
+namespace inject {
+
+/*!
+ * \brief Inject linear memory stream
+ * \param IB IRBuilder of manipulating the IR.
+ * \param PortNum The number of the port this stream involved.
+ * \param Stream The analyzed memory information.
+ * \param MO The memory operation. Refer MemoryOperation enum for more details.
+ * \param PP The padding policy. Refer Padding enum for more details.
+ * \param MT The memory type DMA or SPAD.
+ * \param DType The data type of each element in the injected stream.
+ */
+MemoryType
+InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
+                   MemoryOperation MO, Padding PP, MemoryType MT, int DType);
+
+struct DSAIntrinsicEmitter {
+  IRBuilder<> *IB;
+  std::vector<CallInst*> res;
+
+  struct REG {
+    static IRBuilder<> *IB;
+    Value *value;
+    REG(Value *value_) : value(value_) {}
+    REG(uint64_t x) : value(IB->getInt64(x)) {}
+    operator Value*&() { return value; }
+  };
+
+  DSAIntrinsicEmitter(IRBuilder<> *IB_) : IB(IB_) {
+    REG::IB = IB_;
+  }
+
+  ~DSAIntrinsicEmitter() {
+    REG::IB = nullptr;
+  }
+
+  REG DIV(REG a, REG b) {
+    return IB->CreateUDiv(a, b);
+  }
+
+  void IntrinsicImpl(const std::string &Mnemonic,
+                     const std::string &OpConstrain,
+                     const std::vector<Value*> &Args) {
+    std::ostringstream MOSS;
+    MOSS << Mnemonic << " $0";
+    for (int i = 0, n = OpConstrain.size(), j = 1; i < n; ++i) {
+      if (OpConstrain[i] == ',') {
+        MOSS << ", $" << j;
+        ++j;
+      }
+    }
+    std::vector<Type*> Types;
+    for (auto Arg : Args) {
+      Types.push_back(Arg->getType());
+    }
+    auto FTy = FunctionType::get(IB->getVoidTy(), Types, false);
+    auto IA = InlineAsm::get(FTy, MOSS.str(), OpConstrain, true);
+    res.push_back(IB->CreateCall(IA, Args));
+  }
+
+  void INTRINSIC_RRI(std::string Mnemonic, REG a, REG b, int c) {
+    IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)});
+  }
+
+  void INTRINSIC_RI(std::string Mnemonic, REG a, int b) {
+    IntrinsicImpl(Mnemonic, "r,i", {a.value, IB->getInt64(b)});
+  }
+
+  void INTRINSIC_R(std::string Mnemonic, int a) {
+    INTRINSIC_R(Mnemonic, IB->getInt64(a));
+  }
+
+  void INTRINSIC_R(std::string Mnemonic, REG a) {
+    IntrinsicImpl(Mnemonic, "r", {a.value});
+  }
+
+#include "intrin_impl.h"
+
+};
+
+}
+}

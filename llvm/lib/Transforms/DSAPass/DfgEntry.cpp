@@ -546,10 +546,10 @@ Value *Accumulator::NumValuesProduced() {
 int MemPort::FillMode() {
   if (auto DD = dyn_cast<DedicatedDfg>(Parent)) {
     if (Parent->getUnroll() <= 1)
-      return 0; // None
-    return DD->ConsumedByAccumulator(this) ? 3 /*StrideZeroFill*/ : 4 /*StrideDiscardFill*/;
+      return DP_NoPadding;
+    return DD->ConsumedByAccumulator(this) ? DP_PostStrideZero : DP_PostStridePredOff;
   }
-  return 0; // None
+  return DP_NoPadding;
 }
 
 IndMemPort::IndMemPort(DfgBase *Parent_, LoadInst *Index_, LoadInst *Load) : InputPort(Parent_),
@@ -969,7 +969,8 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto Analyzed = Parent->AnalyzeDataStream(
     Index, this->Index->Load->getType()->getScalarSizeInBits() / 8);
   Parent->InjectRepeat(Analyzed.AR);
-  auto ActualSrc = Parent->InjectStreamIntrin(INDs[0], "ss_dma_rd $0, $1, $2", Analyzed);
+  auto ActualSrc = dsa::inject::InjectLinearStream(IB, INDs[0], Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
+                                                   this->Index->Load->getType()->getScalarSizeInBits() / 8);
 
   for (size_t i = 0; i < Together.size(); ++i) {
     auto Cur = Together[i];
@@ -1083,7 +1084,9 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       auto PortImm = createConstant(Ctx, PM->SoftPortNum | (MP->SoftPortNum << 6));
       assert(!Analyzed.Dimensions.empty());
       LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
-      DFG->InjectStreamIntrin(MP->SoftPortNum, "ss_dma_rd $0, $1, $2", Analyzed);
+      dsa::inject::InjectLinearStream(Parent->Parent->Query->IBPtr, MP->SoftPortNum, Analyzed,
+                                      DMO_Write, DP_NoPadding, DMT_DMA,
+                                      MP->Load->getType()->getScalarSizeInBits() / 8);
 
       /// {
       auto MinusOne = IB->CreateSub(RepeatTime, createConstant(Ctx, 1));
@@ -1105,7 +1108,7 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
           LLVM_DEBUG(dbgs() << "Recur II: " << II << "\n");
         } else {
           II = 1;
-          errs() << "[Warning] To hide the latency " << PM->Latency << ", " << CII * 8 / PortWidth() 
+          errs() << "[Warning] To hide the latency " << PM->Latency << ", " << CII * 8 / PortWidth()
                  << " elements are active\n";
           errs() << "This requires a " << CanHide - PM->Latency << "-deep FIFO buffer\n";
         }
@@ -1121,7 +1124,9 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
         oss << Conc * 8 / PortWidth();
         PM->Meta.set("conc", oss.str());
       }
-      DFG->InjectStreamIntrin(PM->SoftPortNum, "ss_wr_dma $0, $1, $2", Analyzed);
+      dsa::inject::InjectLinearStream(IB, PM->SoftPortNum, Analyzed,
+                                      DMO_Write, DP_NoPadding, DMT_DMA,
+                                      PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8);
       PM->IntrinInjected = MP->IntrinInjected = true;
       return true;
     }
@@ -1166,14 +1171,12 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   } else {
 
     auto Fill = MP->FillMode();
-    createAssembleCall(VoidTy, "ss_fill_mode t0, t0, $0", "i",
-                       {IB->getInt64(((int) Fill))}, DFG->DefaultIP());
     DFG->InjectRepeat(Analyzed.AR);
-    auto Src = DFG->InjectStreamIntrin(MP->SoftPortNum, "ss_dma_rd $0, $1, $2", Analyzed);
+    auto Src =
+      dsa::inject::InjectLinearStream(IB, MP->SoftPortNum, Analyzed, DMO_Read, (Padding) Fill, DMT_DMA,
+                                      MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
     Meta.set("src", dsa::dfg::MetaPort::DataText[(int) Src]);
     Meta.set("op", "read");
-    createAssembleCall(VoidTy, "ss_fill_mode t0, t0, $0", "i",
-                       {IB->getInt64(((int) 0))}, DFG->DefaultIP());
   }
 
 
@@ -1190,7 +1193,8 @@ void PortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
   int Bytes = PM->Store->getValueOperand()->getType()->getScalarType()->getScalarSizeInBits() / 8;
   auto Analyzed = DFG->AnalyzeDataStream(PM->Store->getPointerOperand(), Bytes);
   if (!Analyzed.Dimensions.empty()) {
-    auto Dst = DFG->InjectStreamIntrin(PM->SoftPortNum, "ss_wr_dma $0, $1, $2", Analyzed);
+    auto Dst = dsa::inject::InjectLinearStream(
+      IB, PM->SoftPortNum, Analyzed, DMO_Write, DP_NoPadding, DMT_DMA, Bytes);
     Meta.set("op", "write");
     Meta.set("dest", dsa::dfg::MetaPort::DataText[(int) Dst]);
   } else {
@@ -1432,7 +1436,9 @@ void AtomicPortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto Analyzed = Parent->AnalyzeDataStream(
     Index, this->Index->Load->getType()->getScalarSizeInBits() / 8);
   Parent->InjectRepeat(Analyzed.AR);
-  auto ActualSrc = Parent->InjectStreamIntrin(SoftPortNum, "ss_dma_rd $0, $1, $2", Analyzed);
+  auto ActualSrc =
+    dsa::inject::InjectLinearStream(IB, SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
+                                    this->Index->Load->getType()->getScalarSizeInBits() / 8);
 
   int OperandPort = -1;
   auto DD = dyn_cast<DedicatedDfg>(Parent);

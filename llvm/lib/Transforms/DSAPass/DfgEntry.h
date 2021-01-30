@@ -117,7 +117,7 @@ struct AtomicPortMem;
 // A simple compute instruction
 struct ComputeBody : DfgEntry {
   Instruction *Operation;
-  
+
   ComputeBody(DfgBase *Parent_, Instruction *Operation_);
   int SoftPortNum{-1};
 
