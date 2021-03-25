@@ -38,7 +38,7 @@ using namespace llvm;
 namespace dsa {
 namespace inject {
 
-IRBuilder<> *DSAIntrinsicEmitter::REG::IB = nullptr;
+std::stack<IRBuilder<>*> DSAIntrinsicEmitter::REG::IBStack;
 
 MemoryType
 InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
@@ -46,46 +46,22 @@ InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
   DSAIntrinsicEmitter DIE(IB);
   Value *Start = std::get<0>(Stream.Dimensions.back());
   Value *Bytes = std::get<1>(Stream.Dimensions.back());
+  Value *DTyValue = IB->getInt64(DType);
   if (Stream.Dimensions.size() == 1) {
-    DIE.INSTANTIATE_1D_STREAM(Start, Bytes, PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
+    DIE.INSTANTIATE_1D_STREAM(Start, DIE.DIV(Bytes, DTyValue),
+                              PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
     return DMT_DMA;
   } else if (Stream.Dimensions.size() == 2) {
     Value *Stride = std::get<0>(Stream.Dimensions[0]);
     Value *N = std::get<1>(Stream.Dimensions[0]);
     int Stretch = std::get<2>(Stream.Dimensions[0]);
-    llvm_unreachable("Not supported yet!");
+    DIE.INSTANTIATE_2D_STREAM(Start,
+                              DIE.DIV(Stride, DTyValue),
+                              DIE.DIV(Bytes, DTyValue),
+                              DIE.DIV(Stretch, DTyValue),
+                              N, PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
+    return DMT_DMA;
   }
-
-  // Value *Start = std::get<0>(Stream.Dimensions.back());
-  // Value *N = std::get<1>(Stream.Dimensions.back());
-  // Value *Port = createConstant(getCtx(), PortNum << 1);
-
-  // for (int i = 0; i < ((int) Stream.Dimensions.size()) - 1; ++i) {
-  //   Value* Stride = std::get<0>(Stream.Dimensions[i]);
-  //   Value* N = std::get<1>(Stream.Dimensions[i]);
-  //   Value* Stretch = createConstant(getCtx(), (std::get<2>((Stream.Dimensions[i])) << 1) | 1);
-  //   createAssembleCall(VoidTy, AsmStr, "r,r,i", {Stride, N, Stretch}, InsertBefore);
-  // }
-
-  // dsa::dfg::MetaPort::Data Res = dsa::dfg::MetaPort::Data::Memory;
-  // // FIXME: I am not sure if it is a good hack. I replace "dma" by "scr".
-  // //        I would like a more systemaic way to do it.
-  // if (Parent->AddrsOnSpad.count(Start)) {
-  //   for (size_t i = 0; i < AsmStr.size(); ++i) {
-  //     if (std::string(AsmStr.begin() + i, AsmStr.begin() + i + 3) == "dma") {
-  //       AsmStr[i] = 's';
-  //       AsmStr[i + 1] = 'c';
-  //       AsmStr[i + 2] = 'r';
-  //       Res = dsa::dfg::MetaPort::Data::SPad;
-  //       break;
-  //     }
-  //   }
-  //   Start = Parent->AddrsOnSpad[Start];
-  // }
-
-  // createAssembleCall(VoidTy, AsmStr, "r,r,i", {Start, N, Port}, InsertBefore);
-
-  // LLVM_DEBUG(dbgs() << "\nIntrinsics injected for " << PortNum << " !!\n\n");
   llvm_unreachable("Unsupported stream dimension");
 }
 
@@ -350,11 +326,11 @@ Instruction *DfgBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch
 
   auto IP = DefaultIP();
   auto &IB = *Parent->Query->IBPtr; IB.SetInsertPoint(IP);
-  auto VoidTy = Type::getVoidTy(getCtx());
 
   auto ShiftedStretch = createConstant(getCtx(), Stretch << 3);
   auto VectorizedStretch = IB.CreateSDiv(ShiftedStretch, UnrollConstant());
   auto ActualStretch = IB.CreateShl(VectorizedStretch, 1);
+  (void) ActualStretch;
 
   dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr);
   if (Val ==  nullptr) {
@@ -1308,7 +1284,7 @@ void DfgFile::EmitAndScheduleDfg() {
             }
             // FIXME: For now only one destination is supported
             // Later divergence will be supported
-            assert(OutPorts.size() == 1);
+            CHECK(OutPorts.size() == 1) << OutPorts.size();
             OutPorts[0]->SoftPortNum = Port;
 
             // Fill in the latency of each node.
@@ -1349,7 +1325,6 @@ void DfgFile::EmitAndScheduleDfg() {
 
   LLVM_DEBUG(dbgs() << "[Config] " << ConfigSize << ": " << ConfigString << "\n");
 
-  auto VoidTy = Type::getVoidTy(getCtx());
   auto Module = Func.getParent();
   auto ConfigData = ConstantDataArray::getString(getCtx(), ConfigString);
   auto GV = new GlobalVariable(*Module, ConfigData->getType(), false, GlobalValue::ExternalLinkage,
@@ -1373,7 +1348,6 @@ void DfgFile::EmitAndScheduleDfg() {
 void DfgFile::EraseOffloadedInstructions() {
 
   std::set<Instruction*> Unique;
-  auto VoidTy = Type::getVoidTy(getCtx());
 
   for (auto &DFG : DFGs) {
     for (auto Entry: DFG->Entries) {
@@ -1536,21 +1510,23 @@ void DataMoveDfg::dump(std::ostringstream &os) {
 
 bool DedicatedDfg::Contains(Instruction *Inst) {
 
-  if (Inst->getParent() == Parent->Config->getParent()) {
-    for (Instruction *I = Parent->Config, *E = &Parent->Config->getParent()->back();
-         I != E; I = I->getNextNode()) {
-      if (I == Inst)
-        return true;
-    }
-  }
+  // FIXME(@were): I forgot what this is doing.
 
-  if (Inst->getParent() == Parent->Fence->getParent()) {
-    for (Instruction *I = Inst, *E = &Parent->Fence->getParent()->back();
-         I != E; I = I->getNextNode()) {
-      if (I == Parent->Fence)
-        return true;
-    }
-  }
+  // if (Inst->getParent() == Parent->Config->getParent()) {
+  //   for (Instruction *I = Parent->Config, *E = &Parent->Config->getParent()->back();
+  //        I != E; I = I->getNextNode()) {
+  //     if (I == Inst)
+  //       return true;
+  //   }
+  // }
+
+  // if (Inst->getParent() == Parent->Fence->getParent()) {
+  //   for (Instruction *I = Inst, *E = &Parent->Fence->getParent()->back();
+  //        I != E; I = I->getNextNode()) {
+  //     if (I == Parent->Fence)
+  //       return true;
+  //   }
+  // }
 
   return Contains(Inst->getParent());
 }

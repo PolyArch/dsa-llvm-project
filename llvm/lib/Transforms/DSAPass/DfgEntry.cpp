@@ -968,7 +968,7 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto Index = this->Index->Load->getPointerOperand();
   auto Analyzed = Parent->AnalyzeDataStream(
     Index, this->Index->Load->getType()->getScalarSizeInBits() / 8);
-  Parent->InjectRepeat(Analyzed.AR);
+  Parent->InjectRepeat(Analyzed.AR, nullptr, this->SoftPortNum);
   auto ActualSrc = dsa::inject::InjectLinearStream(IB, INDs[0], Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
                                                    this->Index->Load->getType()->getScalarSizeInBits() / 8);
 
@@ -1014,8 +1014,6 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
 
   // Wrappers
   auto MP = this;
-  auto &Ctx = Parent->getCtx();
-  auto VoidTy = Type::getVoidTy(Ctx);
 
   IB->SetInsertPoint(Parent->DefaultIP());
 
@@ -1081,7 +1079,6 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
         RepeatTime = IB->CreateMul(RepeatTime, TripCnt);
         Analyzed.Dimensions.erase(Analyzed.Dimensions.begin());
       }
-      auto PortImm = createConstant(Ctx, PM->SoftPortNum | (MP->SoftPortNum << 6));
       assert(!Analyzed.Dimensions.empty());
       LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
       dsa::inject::InjectLinearStream(Parent->Parent->Query->IBPtr, MP->SoftPortNum, Analyzed,
@@ -1089,15 +1086,16 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
                                       MP->Load->getType()->getScalarSizeInBits() / 8);
 
       /// {
-      auto MinusOne = IB->CreateSub(RepeatTime, createConstant(Ctx, 1));
+      auto MinusOne = IB->CreateSub(RepeatTime, IB->getInt64(1));
       auto NumElements = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
                                         IB->getInt64(PM->PortWidth() / 8));
       auto Recurrenced = IB->CreateMul(MinusOne, NumElements);
       /// }
 
       LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
-      createAssembleCall(VoidTy, "ss_wr_rd $0, zero, $1", "r,i", {Recurrenced, PortImm},
-                         DFG->DefaultIP());
+      dsa::inject::DSAIntrinsicEmitter DIE(IB);
+      DIE.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, Recurrenced,
+                        MP->Load->getType()->getScalarSizeInBits() / 8);
       int II = 1;
       int Conc = -1;
       if (auto CI = dyn_cast<ConstantInt>(std::get<1>(Analyzed.Dimensions.back()))) {
@@ -1151,8 +1149,6 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
 
   // Wrappers
   auto MP = this;
-  auto &Ctx = Parent->getCtx();
-  auto VoidTy = Type::getVoidTy(Ctx);
   auto DFG = this->Parent;
 
   LLVM_DEBUG(dbgs() << "Analyzing "; MP->Load->dump());
@@ -1171,7 +1167,7 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   } else {
 
     auto Fill = MP->FillMode();
-    DFG->InjectRepeat(Analyzed.AR);
+    DFG->InjectRepeat(Analyzed.AR, nullptr, this->SoftPortNum);
     auto Src =
       dsa::inject::InjectLinearStream(IB, MP->SoftPortNum, Analyzed, DMO_Read, (Padding) Fill, DMT_DMA,
                                       MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
@@ -1244,10 +1240,10 @@ void CtrlSignal::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto DD = dyn_cast<DedicatedDfg>(Parent);
   assert(DD);
   auto InsertBefore = DD->DefaultIP();
-  auto &Ctx = DD->getCtx();
-  auto VoidTy = Type::getVoidTy(Ctx);
-  auto One = createConstant(Ctx, 1);
-  auto Two = createConstant(Ctx, 2);
+  auto One = IB->getInt64(1);
+  auto Two = IB->getInt64(2);
+
+  dsa::inject::DSAIntrinsicEmitter DIE(IB);
 
 
   if (CS->Controlled->getPredicate()) {
@@ -1255,12 +1251,8 @@ void CtrlSignal::InjectStreamIntrinsic(IRBuilder<> *IB) {
       CS->IntrinInjected = true;
       LLVM_DEBUG(dbgs() << "Skipped:"; CS->dump());
     } else {
-      createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
-                         {Two, One, createConstant(Ctx, SoftPortNum)},
-                         Controlled->UnderlyingInst()->getNextNode());
-      createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
-                         {One, One, createConstant(Ctx, SoftPortNum)},
-                         DD->PrologueIP);
+      DIE.SS_CONST(SoftPortNum, Two, One, Two->getType()->getScalarSizeInBits() / 8);
+      DIE.SS_CONST(SoftPortNum, One, One, Two->getType()->getScalarSizeInBits() / 8);
     }
     IntrinInjected = true;
     return;
@@ -1272,21 +1264,14 @@ void CtrlSignal::InjectStreamIntrinsic(IRBuilder<> *IB) {
   assert(CR);
 
   /// {
-  //IB->SetInsertPoint(InsertBefore);
   auto Iters = IB->CreateUDiv(DD->ProdTripCount(DD->LoopNest.size(), InsertBefore),
                               CR, "const.iters");
-  createAssembleCall(VoidTy, "ss_set_iter $0", "r", {Iters}, InsertBefore);
-  auto Port0 = createConstant(Ctx, (1 << 7) | CS->SoftPortNum);
-  auto Port1 = createConstant(Ctx, (1 << 6) | CS->SoftPortNum);
-  auto Unroll = createConstant(Ctx, DD->UnrollFactor);
+  auto Unroll = IB->getInt64(DD->UnrollFactor);
   auto Ceil = CeilDiv(CR, Unroll, InsertBefore);
   auto RepeatTwo = IB->CreateSub(Ceil, One, "repeat.two", InsertBefore);
+  DIE.SS_2D_CONST(CS->SoftPortNum, Two, RepeatTwo, One, One, Iters,
+                  Two->getType()->getScalarSizeInBits() / 8);
   /// }
-
-  createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i", {Two, RepeatTwo, Port0},
-                     InsertBefore);
-  createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i", {One, One, Port1},
-                     InsertBefore);
 
   CS->IntrinInjected = true;
 }
@@ -1362,9 +1347,9 @@ void CtrlMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
 
 void OutputPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto OP = this;
-  auto Recv = createAssembleCall(OP->Output->getType(), "ss_recv $0, zero, $1", "=r,i",
-                                 {createConstant(Parent->getCtx(), OP->SoftPortNum)},
-                                 Parent->DefaultIP());
+  dsa::inject::DSAIntrinsicEmitter DIE(IB);
+  DIE.SS_RECV(OP->SoftPortNum, OP->Output->getType()->getScalarSizeInBits() / 8);
+  auto Recv = IB->CreateBitCast(DIE.res[0], OP->Output->getType());
   std::set<Instruction*> Equiv;
   FindEquivPHIs(OP->Output, Equiv);
   for (auto Iter : Equiv) {
@@ -1375,26 +1360,24 @@ void OutputPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
 
 void StreamOutPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto SOP = this;
-  auto &Ctx = Parent->getCtx();
-  auto VoidTy = Type::getVoidTy(Ctx);
-  auto One = createConstant(Ctx, 1);
 
   LLVM_DEBUG(dbgs() << "StreamOut: "; SOP->Output->dump());
   auto SIP = SOP->FindConsumer();
   assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
-  auto PortImm = createConstant(Ctx, SOP->SoftPortNum | (SIP->SoftPortNum << 6));
+  dsa::inject::DSAIntrinsicEmitter DIE(IB);
   if (auto DD = dyn_cast<DedicatedDfg>(SIP->Parent)) {
     int Bytes = SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
     auto Analyzed = DD->AnalyzeDataStream(SOP->Output, Bytes, true, Parent->DefaultIP());
     /// FIXME: Will this cause other problem?
-    DD->InjectRepeat(Analyzed.AR);
+    DD->InjectRepeat(Analyzed.AR, nullptr, SIP->SoftPortNum);
     assert(Analyzed.OuterRepeat);
-    createAssembleCall(VoidTy, "ss_wr_rd $0, zero, $1", "r,i",
-                       {Analyzed.OuterRepeat /* How this One? */, PortImm}, DD->DefaultIP());
+    assert(IB);
+    DIE.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, Analyzed.OuterRepeat,
+                      SOP->Output->getType()->getScalarSizeInBits() / 8);
   } else if (isa<TemporalDfg>(SIP->Parent)) {
     // TODO: Support temporal stream
-    createAssembleCall(VoidTy, "ss_wr_rd $0, zero, $1", "r,i",
-                       {One, PortImm}, Parent->DefaultIP());
+    DIE.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, IB->getInt64(1),
+                      SOP->Output->getType()->getScalarSizeInBits() / 8);
   }
   SOP->IntrinInjected = SIP->IntrinInjected = true;
 }
@@ -1435,11 +1418,10 @@ void AtomicPortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto Index = this->Index->Load->getPointerOperand();
   auto Analyzed = Parent->AnalyzeDataStream(
     Index, this->Index->Load->getType()->getScalarSizeInBits() / 8);
-  Parent->InjectRepeat(Analyzed.AR);
+  Parent->InjectRepeat(Analyzed.AR, nullptr, SoftPortNum);
   auto ActualSrc =
     dsa::inject::InjectLinearStream(IB, SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
                                     this->Index->Load->getType()->getScalarSizeInBits() / 8);
-
   int OperandPort = -1;
   auto DD = dyn_cast<DedicatedDfg>(Parent);
   assert(DD);

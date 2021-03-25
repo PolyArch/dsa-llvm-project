@@ -138,7 +138,7 @@ public:
   Value *ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized, bool isPortConfig);
 
   /// Inject port repeat
-  Instruction *InjectRepeat(const AnalyzedRepeat &AR, Value *Val = nullptr, int Port = -1);
+  Instruction *InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Port);
 
   /// Injecting repeat is little bit tricky, let's consider such a scenario:
   /// for i in 1..10
@@ -147,8 +147,7 @@ public:
   /// Then we should do ceil_div(3, 2) * 10 = 20, instead of 3 * 10 / 2 = 15.
   /// The Prime indicates the "3" here.
   /// The Wrap indicates the "10" here.
-  Instruction *InjectRepeat(Value *Prime, Value *Wrap, int64_t Stretch, Value *Val = nullptr,
-                            int Port = -1);
+  Instruction *InjectRepeat(Value *Prime, Value *Wrap, int64_t Stretch, Value *Val, int Port);
 
   DfgKind getKind() const;
 
@@ -414,28 +413,37 @@ struct DSAIntrinsicEmitter {
   std::vector<CallInst*> res;
 
   struct REG {
-    static IRBuilder<> *IB;
-    Value *value;
+    static std::stack<IRBuilder<>*> IBStack;
+    Value *value{nullptr};
+    REG() {}
     REG(Value *value_) : value(value_) {}
-    REG(uint64_t x) : value(IB->getInt64(x)) {}
+    // REG(uint64_t x) : value(IB->getInt64(x)) {}
+    REG(uint64_t x) {
+      value = IBStack.top()->getInt64(x);
+    }
     operator Value*&() { return value; }
   };
 
   DSAIntrinsicEmitter(IRBuilder<> *IB_) : IB(IB_) {
-    REG::IB = IB_;
+    REG::IBStack.push(IB_);
   }
 
   ~DSAIntrinsicEmitter() {
-    REG::IB = nullptr;
+    REG::IBStack.pop();
   }
 
   REG DIV(REG a, REG b) {
     return IB->CreateUDiv(a, b);
   }
 
+  REG SUB(REG a, REG b) {
+    return IB->CreateSub(a, b);
+  }
+
   void IntrinsicImpl(const std::string &Mnemonic,
                      const std::string &OpConstrain,
-                     const std::vector<Value*> &Args) {
+                     const std::vector<Value*> &Args,
+                     Type *ResTy) {
     std::ostringstream MOSS;
     MOSS << Mnemonic << " $0";
     for (int i = 0, n = OpConstrain.size(), j = 1; i < n; ++i) {
@@ -448,25 +456,26 @@ struct DSAIntrinsicEmitter {
     for (auto Arg : Args) {
       Types.push_back(Arg->getType());
     }
-    auto FTy = FunctionType::get(IB->getVoidTy(), Types, false);
+    auto FTy = FunctionType::get(ResTy, Types, false);
     auto IA = InlineAsm::get(FTy, MOSS.str(), OpConstrain, true);
     res.push_back(IB->CreateCall(IA, Args));
   }
 
+  void INTRINSIC_DRI(std::string Mnemonic, REG &a, REG b, int c) {
+    IntrinsicImpl(Mnemonic, "=r,r,i", {b.value, IB->getInt64(c)}, IB->getInt64Ty());
+    a.value = res.back();
+  }
+
   void INTRINSIC_RRI(std::string Mnemonic, REG a, REG b, int c) {
-    IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)});
+    IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)}, IB->getVoidTy());
   }
 
   void INTRINSIC_RI(std::string Mnemonic, REG a, int b) {
-    IntrinsicImpl(Mnemonic, "r,i", {a.value, IB->getInt64(b)});
-  }
-
-  void INTRINSIC_R(std::string Mnemonic, int a) {
-    INTRINSIC_R(Mnemonic, IB->getInt64(a));
+    IntrinsicImpl(Mnemonic, "r,i", {a.value, IB->getInt64(b)}, IB->getVoidTy());
   }
 
   void INTRINSIC_R(std::string Mnemonic, REG a) {
-    IntrinsicImpl(Mnemonic, "r", {a.value});
+    IntrinsicImpl(Mnemonic, "r", {a.value}, IB->getVoidTy());
   }
 
 #include "intrin_impl.h"
