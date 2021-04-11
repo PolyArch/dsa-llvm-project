@@ -41,9 +41,11 @@ namespace inject {
 std::stack<IRBuilder<>*> DSAIntrinsicEmitter::REG::IBStack;
 
 MemoryType
-InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
+InjectLinearStream(IRBuilder<> *IB,
+                   const std::vector<StreamSpecialize::StickyRegister> &Regs,
+                   int PortNum, const AnalyzedStream &Stream,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
-  DSAIntrinsicEmitter DIE(IB);
+  DSAIntrinsicEmitter DIE(IB, Regs);
   Value *Start = std::get<0>(Stream.Dimensions.back());
   Value *Bytes = std::get<1>(Stream.Dimensions.back());
   Value *DTyValue = IB->getInt64(DType);
@@ -56,11 +58,13 @@ InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
     Value *N = std::get<1>(Stream.Dimensions[0]);
     int Stretch = std::get<2>(Stream.Dimensions[0]);
     DIE.INSTANTIATE_2D_STREAM(Start,
-                              DIE.DIV(Stride, DTyValue),
                               DIE.DIV(Bytes, DTyValue),
-                              DIE.DIV(Stretch, DTyValue),
+                              DIE.DIV(Stride, DTyValue),
+                              IB->getInt64(Stretch / DType),
                               N, PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
     return DMT_DMA;
+  } else {
+    llvm::errs() << Stream.Dimensions.size();
   }
   llvm_unreachable("Unsupported stream dimension");
 }
@@ -244,7 +248,7 @@ void DfgFile::InjectStreamIntrinsics() {
   }
 
   IB->SetInsertPoint(Fence);
-  dsa::inject::DSAIntrinsicEmitter(IB).SS_WAIT_ALL();
+  dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
 
 }
 
@@ -280,13 +284,14 @@ Instruction *DfgBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
     // Once we have a better hardware support to do this we no longer need this
     assert(AR.Prime->getSCEVType() == scAddRecExpr);
     auto SARE = dyn_cast<SCEVAddRecExpr>(AR.Prime);
-    auto First = Expander.expandCodeFor(SARE->getStart(), nullptr, DefaultIP());
+    auto First = IB->CreateAdd(Expander.expandCodeFor(SARE->getStart(), nullptr, DefaultIP()), One);
     auto BT =
       Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()), nullptr, DefaultIP());
     auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr, DefaultIP());
-    assert(isa<ConstantInt>(SV));
-    auto SVInt = dyn_cast<ConstantInt>(SV)->getSExtValue();
-    assert(SVInt == 1 || SVInt == -1);
+    auto SVCI = dyn_cast<ConstantInt>(SV);
+    CHECK(SVCI);
+    auto SVInt = SVCI->getSExtValue();
+    CHECK(SVInt == 1 || SVInt == -1);
     auto Last = IB->CreateAdd(First, IB->CreateMul(BT, SV));
 
     switch (getUnroll()) {
@@ -332,9 +337,16 @@ Instruction *DfgBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch
   auto ActualStretch = IB.CreateShl(VectorizedStretch, 1);
   (void) ActualStretch;
 
-  dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr);
-  if (Val ==  nullptr) {
-    DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Prime);
+  dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr, Parent->Query->DSARegs);
+  if (Val == nullptr) {
+    auto Repeat = IB.CreateAdd(
+      IB.CreateSDiv(IB.CreateSub(Prime, IB.getInt64(1)), UnrollConstant()),
+      IB.getInt64(1));
+    DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
+    if (Stretch) {
+      DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, getUnroll());
+      DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, Stretch);
+    }
     return DIE.res.back();
   } else {
     LLVM_DEBUG(dbgs() << "Inject Repeat: "; Val->dump();
@@ -1137,7 +1149,6 @@ void DfgBase::ReorderEntries() {
 
 void DfgBase::dump(std::ostringstream &os) {
 
-
   if (!Entries.empty()) {
     auto BF = Parent->Query->BFI->getBlockFreq(getBlocks()[0]);
     os << "#pragma group frequency " << BF.getFrequency() << "\n";
@@ -1163,6 +1174,16 @@ void DfgBase::dump(std::ostringstream &os) {
 
   for (auto Elem : EntryFilter<OutputPort>())
     Elem->EmitOutPort(os);
+
+  for (auto Elem : EntryFilter<IndMemPort>()) {
+    os << "\n\n----\n\n";
+    os << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
+       << ": indirect_in_" << ID << "_" << Elem->ID << "\n";
+    os << "indirect_out_" << ID << "_" << Elem->ID << " = "
+       << "indirect_in_" << ID << "_" << Elem->ID << "\n";
+    os << "Output" << Elem->Index->Load->getType()->getScalarSizeInBits()
+       << ": indirect_out_" << ID << "_" << Elem->ID << "\n";
+  }
 
 }
 
@@ -1213,7 +1234,7 @@ void DfgFile::EmitAndScheduleDfg() {
     assert(SBCONFIG && "Please specify CGRA config environment variable $SBCONFIG");
     LLVM_DEBUG(
       dbgs() << "Emitted DFG:\n";
-      system(formatv("cat {0} 1>&2", FileName).str().c_str());
+      CHECK(system(formatv("cat {0} 1>&2", FileName).str().c_str()) == 0);
       dbgs() << "\n\n";
     );
 
@@ -1230,7 +1251,7 @@ void DfgFile::EmitAndScheduleDfg() {
     if (Query->MF.EXTRACT) {
       Verbose += " --max-iters 1";
     }
-    auto Cmd = formatv("ss_sched {0} {1} {2} > /dev/null", Verbose, SBCONFIG, FileName);
+    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", Verbose, SBCONFIG, FileName);
     LLVM_DEBUG(dbgs() << Cmd);
     if (system(Cmd.str().c_str()) != 0) {
       // TODO(@were): throw exception here.
@@ -1254,7 +1275,7 @@ void DfgFile::EmitAndScheduleDfg() {
   std::string ConfigString;
 
   std::string Line;
-  std::string PortPrefix(formatv("P_{0}_sub", Stripped).str());
+  std::string PortPrefix(formatv("P_{0}_", Stripped).str());
   while (std::getline(ifs, Line)) {
     std::istringstream iss(Line);
     std::string Token;
@@ -1263,12 +1284,10 @@ void DfgFile::EmitAndScheduleDfg() {
     if (Token == "#define") {
       iss >> Token;
       // #define P_dfgX_subY_vZ
-      if (Token.find(PortPrefix) == 0) {
+      if (Token.find(PortPrefix + "sub") == 0) {
         int X, Y;
-        Token = Token.substr(PortPrefix.size(), Token.size());
-        if (sscanf(Token.c_str(), "%d_v%d", &X, &Y) != 2) {
-          // TODO(@were): throw exception here!
-        }
+        Token = Token.substr(PortPrefix.size() + 3, Token.size());
+        CHECK(sscanf(Token.c_str(), "%d_v%d", &X, &Y) == 2);
         int Port;
         iss >> Port;
         LLVM_DEBUG(dbgs() << "sub" << X << "v" << Y << " -> " << Port << "\n");
@@ -1309,6 +1328,22 @@ void DfgFile::EmitAndScheduleDfg() {
       // #define dfgx_size size
       } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {
         iss >> ConfigSize;
+      } else if (Token.find(PortPrefix + "indirect_") == 0) {
+        Token = Token.substr(std::string(PortPrefix + "indirect_").size());
+        int X, Y;
+        int Port;
+        if (sscanf(Token.c_str(), "in_%d_%d", &X, &Y) == 2) {
+          auto IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
+          CHECK(IMP);
+          iss >> Port;
+          IMP->Index->SoftPortNum = Port;
+        } else {
+          CHECK(sscanf(Token.c_str(), "out_%d_%d", &X, &Y) == 2);
+          auto IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
+          CHECK(IMP);
+          iss >> Port;
+          IMP->IndexOutPort = Port;
+        }
       }
     // char dfgx_config[size] = "filename:dfgx.sched";
     } else if (Token == "char") {
@@ -1329,7 +1364,6 @@ void DfgFile::EmitAndScheduleDfg() {
   auto ConfigData = ConstantDataArray::getString(getCtx(), ConfigString);
   auto GV = new GlobalVariable(*Module, ConfigData->getType(), false, GlobalValue::ExternalLinkage,
                                ConfigData, formatv("{0}_config", Stripped));
-
   GV->setAlignment(llvm::MaybeAlign(1));
   GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Local);
 
@@ -1340,7 +1374,7 @@ void DfgFile::EmitAndScheduleDfg() {
 
   auto IB = Query->IBPtr;
   IB->SetInsertPoint(Config);
-  dsa::inject::DSAIntrinsicEmitter DIE(IB);
+  dsa::inject::DSAIntrinsicEmitter DIE(IB, Query->DSARegs);
   DIE.SS_CONFIG(GV, ConstConfig);
   LLVM_DEBUG(dbgs() << "Inject config asm "; DIE.res.back()->dump());
 }
@@ -1416,13 +1450,13 @@ void DfgFile::EraseOffloadedInstructions() {
           if (isa<PHINode>(I) || Found) {
             auto IB = Query->IBPtr;
             IB->SetInsertPoint(I->getNextNode());
-            dsa::inject::DSAIntrinsicEmitter(IB).SS_WAIT_ALL();
+            dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
             break;
           }
           if (I == &I->getParent()->front()) {
             auto IB = Query->IBPtr;
             IB->SetInsertPoint(I);
-            dsa::inject::DSAIntrinsicEmitter(IB).SS_WAIT_ALL();
+            dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
             break;
           }
         }
@@ -1911,8 +1945,13 @@ SmallVector<BasicBlock*, 0> TemporalDfg::getBlocks() {
 }
 
 void DfgBase::FinalizeEntryID() {
-  for (size_t i = 0; i < Entries.size(); ++i)
+  for (int i = 0, n = Entries.size(); i < n; ++i) {
     Entries[i]->ID = i;
+  }
+  int j = Entries.size();
+  for (auto Elem : EntryFilter<IndMemPort>()) {
+    Elem->Index->ID = j++;
+  }
 }
 
 AnalyzedStream TemporalDfg::AnalyzeDataStream(Value *Index, int Bytes) {

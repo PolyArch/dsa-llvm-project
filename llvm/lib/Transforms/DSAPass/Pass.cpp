@@ -16,6 +16,7 @@
 #include "Transformation.h"
 #include "Util.h"
 #include "Pass.h"
+#include "dsa/rf.h"
 
 using namespace llvm;
 
@@ -66,6 +67,22 @@ GatherIntrinPairs(Function &F, llvm::Intrinsic::ID Kind) {
   return Res;
 }
 
+std::vector<StreamSpecialize::StickyRegister>
+InjectRegisterFile(IRBuilder<> *IB) {
+  std::vector<StreamSpecialize::StickyRegister> Res;
+  std::string TyName("reg.type");
+  auto RegType = StructType::create(TyName, IB->getInt64Ty(), IB->getInt8Ty());
+  for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
+    auto A = IB->CreateAlloca(RegType, nullptr, REG_NAMES[i]);
+    auto R = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(0)});
+    auto S = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(1)});
+    IB->CreateStore(IB->getInt64(REG_STICKY[i]), R);
+    IB->CreateStore(IB->getInt8(i == DSARF::TBC), S);
+    Res.emplace_back(A, R, S);
+  }
+  return Res;
+}
+
 bool StreamSpecialize::runOnFunction(Function &F) {
 
   if (!MF.TEMPORAL) {
@@ -87,6 +104,10 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   {
     int Cnt = 0;
     auto ScopePairs = GatherIntrinPairs(F, Intrinsic::ss_config_start);
+    if (!ScopePairs.empty()) {
+      IB.SetInsertPoint(&F.getEntryBlock().back());
+      DSARegs = InjectRegisterFile(&IB);
+    }
     for (auto &Pair : ScopePairs) {
       std::ostringstream OSS;
       OSS << F.getName().bytes_begin() << "_dfg_" << Cnt++ << ".dfg";
@@ -145,9 +166,9 @@ void StreamSpecialize::HandleMemIntrin(Function &F) {
 
     IntrinDfg Dfg(Dummy, Intrin);
     IBPtr->SetInsertPoint(Dfg.DefaultIP());
-    dsa::inject::InjectLinearStream(IBPtr, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
-    dsa::inject::InjectLinearStream(IBPtr, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
-    dsa::inject::DSAIntrinsicEmitter(IBPtr).SS_WAIT(~0ull);
+    dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
+    dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
+    dsa::inject::DSAIntrinsicEmitter(IBPtr, DSARegs).SS_WAIT(~0ull);
     Intrin->eraseFromParent();
   }
 

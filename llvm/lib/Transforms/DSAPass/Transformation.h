@@ -196,6 +196,8 @@ public:
   friend struct DfgEntry;
   friend struct StreamOutPort;
   friend struct MemPort;
+  friend struct PortMem;
+  friend struct OutputPort;
   friend struct IndMemPort;
   friend struct Predicate;
   friend struct ComputeBody;
@@ -405,12 +407,16 @@ namespace inject {
  * \param DType The data type of each element in the injected stream.
  */
 MemoryType
-InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
+InjectLinearStream(IRBuilder<> *IB,
+                   const std::vector<StreamSpecialize::StickyRegister> &Regs,
+                   int PortNum, const AnalyzedStream &Stream,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType);
 
 struct DSAIntrinsicEmitter {
+  bool Prepass{true};
   IRBuilder<> *IB;
   std::vector<CallInst*> res;
+  std::vector<StreamSpecialize::StickyRegister> Regs;
 
   struct REG {
     static std::stack<IRBuilder<>*> IBStack;
@@ -424,7 +430,8 @@ struct DSAIntrinsicEmitter {
     operator Value*&() { return value; }
   };
 
-  DSAIntrinsicEmitter(IRBuilder<> *IB_) : IB(IB_) {
+  DSAIntrinsicEmitter(IRBuilder<> *IB_,
+                      const std::vector<StreamSpecialize::StickyRegister> &Regs_) : IB(IB_), Regs(Regs_) {
     REG::IBStack.push(IB_);
   }
 
@@ -459,6 +466,17 @@ struct DSAIntrinsicEmitter {
     auto FTy = FunctionType::get(ResTy, Types, false);
     auto IA = InlineAsm::get(FTy, MOSS.str(), OpConstrain, true);
     res.push_back(IB->CreateCall(IA, Args));
+    if (Mnemonic == "ss_lin_strm" ||
+        Mnemonic == "ss_ind_strm" ||
+        Mnemonic == "ss_recv" ||
+        Mnemonic == "ss_wr_rd") {
+      for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
+        auto C = IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
+        auto SV = IB->CreateLoad(Regs[i].Reg);
+        auto Reset = IB->CreateSelect(C, SV, IB->getInt64(REG_STICKY[i]));
+        IB->CreateStore(Reset, Regs[i].Reg);
+      }
+    }
   }
 
   void INTRINSIC_DRI(std::string Mnemonic, REG &a, REG b, int c) {
@@ -466,7 +484,56 @@ struct DSAIntrinsicEmitter {
     a.value = res.back();
   }
 
+  Value *MakeValue(Value *Val) {
+    if (Val->getType()->isPointerTy()) {
+      return IB->CreatePtrToInt(Val, IB->getInt64Ty());
+    }
+    auto Ty = IB->getIntNTy(Val->getType()->getScalarSizeInBits());
+    auto RI = IB->CreateBitCast(Val, Ty);
+    if (RI->getType()->getScalarSizeInBits() < 64) {
+      RI = IB->CreateSExt(RI, IB->getInt64Ty());
+    }
+    return RI;
+  }
+
   void INTRINSIC_RRI(std::string Mnemonic, REG a, REG b, int c) {
+    if (Prepass && (Mnemonic == "ss_cfg_param" && c != 98)) {
+      int idx1 = c & 31;
+      int s1 = (c >> 10) & 1;
+      int idx2 = (c >> 5) & 31;
+      int s2 = (c >> 11) & 1;
+      Value *IV1 = IB->getInt64(idx1);
+      if (idx1) {
+        auto AA = IB->CreateLoad(Regs[idx1].Reg);
+        auto AS = IB->CreateLoad(Regs[idx1].Sticky);
+        auto AV = MakeValue(a.value);
+        IB->CreateStore(AV, Regs[idx1].Reg);
+        IB->CreateStore(IB->getInt8(s1), Regs[idx1].Sticky);
+        if (getenv("FUSION")) {
+          IntrinsicImpl("equal.hint.v1", "r", {IB->CreateICmpEQ(AA, AV)}, IB->getVoidTy());
+          IntrinsicImpl("equal.hint.s1", "r", {IB->CreateICmpEQ(AS, IB->getInt8(s1))}, IB->getVoidTy());
+        }
+      }
+      Value *IV2 = IB->getInt64(idx2);
+      if (idx2) {
+        auto BB = IB->CreateLoad(Regs[idx2].Reg);
+        auto BS = IB->CreateLoad(Regs[idx2].Sticky);
+        auto BV = MakeValue(b.value);
+        IB->CreateStore(BV, Regs[idx2].Reg);
+        IB->CreateStore(IB->getInt8(s2), Regs[idx2].Sticky);
+        if (getenv("FUSION")) {
+          IntrinsicImpl("equal.hint.v2", "r", {IB->CreateICmpEQ(BB, BV)}, IB->getVoidTy());
+          IntrinsicImpl("equal.hint.s2", "r", {IB->CreateICmpEQ(BS, IB->getInt8(s2))}, IB->getVoidTy());
+        }
+      }
+      auto A = IB->CreateLoad(Regs[idx1].Reg);
+      auto B = IB->CreateLoad(Regs[idx2].Reg);
+      auto S1 = IB->getInt64(s1 << 10);
+      auto S2 = s2 ? IB->getInt64(~((1 << 11) - 1)) : IB->getInt64(0);
+      auto Imm = IB->CreateOr(IB->CreateOr(IB->CreateOr(IV1, IB->CreateShl(IV2, 5)), S1), S2);
+      IntrinsicImpl(Mnemonic, "r,r,i", {A, B, Imm}, IB->getVoidTy());
+      return;
+    }
     IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)}, IB->getVoidTy());
   }
 

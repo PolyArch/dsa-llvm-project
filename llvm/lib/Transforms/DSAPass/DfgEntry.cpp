@@ -954,40 +954,38 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
       continue;
     if (this->Index->Load == IMP1->Index->Load) {
       Together.push_back(IMP1);
-      INDs.push_back(Parent->getNextIND());
+      CHECK(IMP1->Index->SoftPortNum != -1);
+      INDs.push_back(IMP1->Index->SoftPortNum);
     }
   }
 
-  assert(Together[0] == this);
+  CHECK(Together[0] == this);
+
+  dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
 
   for (size_t i = 1; i < Together.size(); ++i) {
-    createAssembleCall(VoidTy, "ss_add_port zero, zero, $0", "i",
-                       {createConstant(Ctx, INDs[i])}, Parent->DefaultIP());
+    DIE.SS_CONFIG_PORT(INDs[i], DPF_PortBroadcast, true);
   }
 
   auto Index = this->Index->Load->getPointerOperand();
   auto Analyzed = Parent->AnalyzeDataStream(
     Index, this->Index->Load->getType()->getScalarSizeInBits() / 8);
   Parent->InjectRepeat(Analyzed.AR, nullptr, this->SoftPortNum);
-  auto ActualSrc = dsa::inject::InjectLinearStream(IB, INDs[0], Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
+  auto ActualSrc = dsa::inject::InjectLinearStream(IB, Parent->Parent->Query->DSARegs,
+                                                   this->Index->SoftPortNum, Analyzed,
+                                                   DMO_Read, DP_NoPadding, DMT_DMA,
                                                    this->Index->Load->getType()->getScalarSizeInBits() / 8);
 
   for (size_t i = 0; i < Together.size(); ++i) {
     auto Cur = Together[i];
     int IBits = Cur->Index->Load->getType()->getScalarSizeInBits();
     int DBits = Cur->UnderlyingInst()->getType()->getScalarSizeInBits();
-
-    auto TImm = createConstant(Ctx, (1 << 4) | (TBits(IBits) << 2) | TBits(DBits));
-    createAssembleCall(VoidTy, "ss_cfg_ind $0, $1, $2", "r,r,i",
-                       {createConstant(Ctx, 0), createConstant(Ctx, DBits / 8), TImm},
-                       Parent->DefaultIP());
-
     auto Num = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
                               createConstant(Ctx, IBits / 8));
-    auto PortImm = createConstant(Ctx, (Cur->SoftPortNum << 5) | INDs[i]);
     auto GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
-    createAssembleCall(VoidTy, "ss_ind $0, $1, $2", "r,r,i",
-                       {GEP->getOperand(0), Num, PortImm}, Parent->DefaultIP());
+    DIE.SS_INDIRECT_READ(this->SoftPortNum, this->IndexOutPort, GEP->getOperand(0),
+                         Cur->Load->getType()->getScalarSizeInBits() / 8, Num, DMT_DMA, 0, 0);
+
     // TODO: Support indirect read on the SPAD(?)
     Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int) ActualSrc]);
     Cur->Meta.set("dest", "memory");
@@ -1014,8 +1012,6 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
 
   // Wrappers
   auto MP = this;
-
-  IB->SetInsertPoint(Parent->DefaultIP());
 
   LLVM_DEBUG(dbgs() << "Injecting update streams!\n");
 
@@ -1081,8 +1077,9 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       }
       assert(!Analyzed.Dimensions.empty());
       LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
-      dsa::inject::InjectLinearStream(Parent->Parent->Query->IBPtr, MP->SoftPortNum, Analyzed,
-                                      DMO_Write, DP_NoPadding, DMT_DMA,
+      dsa::inject::InjectLinearStream(Parent->Parent->Query->IBPtr, Parent->Parent->Query->DSARegs,
+                                      MP->SoftPortNum, Analyzed,
+                                      DMO_Read, DP_NoPadding, DMT_DMA,
                                       MP->Load->getType()->getScalarSizeInBits() / 8);
 
       /// {
@@ -1092,10 +1089,10 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       auto Recurrenced = IB->CreateMul(MinusOne, NumElements);
       /// }
 
-      LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
-      dsa::inject::DSAIntrinsicEmitter DIE(IB);
+      dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
       DIE.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, Recurrenced,
                         MP->Load->getType()->getScalarSizeInBits() / 8);
+
       int II = 1;
       int Conc = -1;
       if (auto CI = dyn_cast<ConstantInt>(std::get<1>(Analyzed.Dimensions.back()))) {
@@ -1122,7 +1119,8 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
         oss << Conc * 8 / PortWidth();
         PM->Meta.set("conc", oss.str());
       }
-      dsa::inject::InjectLinearStream(IB, PM->SoftPortNum, Analyzed,
+      dsa::inject::InjectLinearStream(IB, Parent->Parent->Query->DSARegs,
+                                      PM->SoftPortNum, Analyzed,
                                       DMO_Write, DP_NoPadding, DMT_DMA,
                                       PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8);
       PM->IntrinInjected = MP->IntrinInjected = true;
@@ -1135,6 +1133,8 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
 }
 
 void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
+  IB->SetInsertPoint(this->Parent->DefaultIP());
+
   if (IntrinInjected)
     return;
 
@@ -1163,18 +1163,20 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
     MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
 
   if (Analyzed.Dimensions.empty()) {
-    DFG->InjectRepeat(Analyzed.AR, MP->Load, MP->SoftPortNum);
+    auto RepeatedConst = IB->CreateBitCast(
+      IB->CreateLoad(MP->Load->getPointerOperand()), IB->getInt64Ty());
+    DFG->InjectRepeat(Analyzed.AR, RepeatedConst, MP->SoftPortNum);
   } else {
 
     auto Fill = MP->FillMode();
     DFG->InjectRepeat(Analyzed.AR, nullptr, this->SoftPortNum);
     auto Src =
-      dsa::inject::InjectLinearStream(IB, MP->SoftPortNum, Analyzed, DMO_Read, (Padding) Fill, DMT_DMA,
+      dsa::inject::InjectLinearStream(IB, Parent->Parent->Query->DSARegs,
+                                      MP->SoftPortNum, Analyzed, DMO_Read, (Padding) Fill, DMT_DMA,
                                       MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
     Meta.set("src", dsa::dfg::MetaPort::DataText[(int) Src]);
     Meta.set("op", "read");
   }
-
 
   IntrinInjected = true;
 }
@@ -1190,19 +1192,27 @@ void PortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto Analyzed = DFG->AnalyzeDataStream(PM->Store->getPointerOperand(), Bytes);
   if (!Analyzed.Dimensions.empty()) {
     auto Dst = dsa::inject::InjectLinearStream(
-      IB, PM->SoftPortNum, Analyzed, DMO_Write, DP_NoPadding, DMT_DMA, Bytes);
+      IB, Parent->Parent->Query->DSARegs, PM->SoftPortNum, Analyzed, DMO_Write, DP_NoPadding, DMT_DMA, Bytes);
     Meta.set("op", "write");
     Meta.set("dest", dsa::dfg::MetaPort::DataText[(int) Dst]);
   } else {
-
-    auto &Ctx = Parent->getCtx();
-    auto VoidTy = Type::getVoidTy(Ctx);
-    int VBtyes = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
-    auto Intrin = createAssembleCall(VoidTy, "ss_wr_dma $0, $1, $2", "r,r,i",
-                       {PM->Store->getPointerOperand(),
-                       IB->getInt64(VBtyes),
-                       IB->getInt64(PM->SoftPortNum << 1)},
-                       PM->Store);
+    dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
+    IB->SetInsertPoint(Store);
+    DIE.INSTANTIATE_1D_STREAM(PM->Store->getPointerOperand(), /*length*/1,
+                              PM->SoftPortNum, /*padding*/0, DSA_Access, DMO_Write, DMT_DMA,
+                              /*signal*/0,
+                              PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8,
+                              0);
+    auto Intrin = DIE.res.back();
+    IB->SetInsertPoint(Parent->DefaultIP());
+    //auto &Ctx = Parent->getCtx();
+    //auto VoidTy = Type::getVoidTy(Ctx);
+    //int VBtyes = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+    //auto Intrin = createAssembleCall(VoidTy, "ss_wr_dma $0, $1, $2", "r,r,i",
+    //                   {PM->Store->getPointerOperand(),
+    //                   IB->getInt64(VBtyes),
+    //                   IB->getInt64(PM->SoftPortNum << 1)},
+    //                   PM->Store);
     Parent->InjectedCode.push_back(Intrin);
     //auto FromCGRA = createAssembleCall(PM->Store->getValueOperand()->getType(),
     //                                   "ss_recv $0, zero, $1", "=r,i",
@@ -1243,7 +1253,7 @@ void CtrlSignal::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto One = IB->getInt64(1);
   auto Two = IB->getInt64(2);
 
-  dsa::inject::DSAIntrinsicEmitter DIE(IB);
+  dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
 
 
   if (CS->Controlled->getPredicate()) {
@@ -1347,7 +1357,7 @@ void CtrlMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
 
 void OutputPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto OP = this;
-  dsa::inject::DSAIntrinsicEmitter DIE(IB);
+  dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
   DIE.SS_RECV(OP->SoftPortNum, OP->Output->getType()->getScalarSizeInBits() / 8);
   auto Recv = IB->CreateBitCast(DIE.res[0], OP->Output->getType());
   std::set<Instruction*> Equiv;
@@ -1364,7 +1374,7 @@ void StreamOutPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   LLVM_DEBUG(dbgs() << "StreamOut: "; SOP->Output->dump());
   auto SIP = SOP->FindConsumer();
   assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
-  dsa::inject::DSAIntrinsicEmitter DIE(IB);
+  dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
   if (auto DD = dyn_cast<DedicatedDfg>(SIP->Parent)) {
     int Bytes = SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
     auto Analyzed = DD->AnalyzeDataStream(SOP->Output, Bytes, true, Parent->DefaultIP());
@@ -1420,7 +1430,8 @@ void AtomicPortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
     Index, this->Index->Load->getType()->getScalarSizeInBits() / 8);
   Parent->InjectRepeat(Analyzed.AR, nullptr, SoftPortNum);
   auto ActualSrc =
-    dsa::inject::InjectLinearStream(IB, SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
+    dsa::inject::InjectLinearStream(IB, Parent->Parent->Query->DSARegs,
+                                    SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
                                     this->Index->Load->getType()->getScalarSizeInBits() / 8);
   int OperandPort = -1;
   auto DD = dyn_cast<DedicatedDfg>(Parent);

@@ -343,6 +343,7 @@ struct StreamOutPort : OutputPort {
 
 struct IndMemPort : InputPort {
   MemPort *Index;
+  int IndexOutPort{-1};
   LoadInst *Load;
 
   IndMemPort(DfgBase *Parent_, LoadInst *Index, LoadInst *Load);
