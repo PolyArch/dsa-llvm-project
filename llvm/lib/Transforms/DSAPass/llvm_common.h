@@ -1,0 +1,22 @@
+#include "llvm/ADT/BreadthFirstIterator.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/ADT/GraphTraits.h"
+#include "llvm/Analysis/LoopAccessAnalysis.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Transforms/Utils/UnrollLoop.h"
+
+// FIXME(@were): Is this a good decision?
+using namespace llvm;

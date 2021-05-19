@@ -12,18 +12,19 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include "Util.h"
-#include "DfgEntry.h"
+#include "DFGEntry.h"
 #include "Pass.h"
+#include "StreamAnalysis.h"
 
 #include "dsa/rf.h"
 #include "dsa/spec.h"
 
 using namespace llvm;
 
-class DfgFile;
-class DedicatedDfg;
-class TemporalDfg;
-class DfgBase;
+class DFGFile;
+class DedicatedDFG;
+class TemporalDFG;
+class DFGBase;
 
 struct AnalyzedRepeat {
 
@@ -46,11 +47,24 @@ struct AnalyzedStream {
   Value *BytesFromMemory(IRBuilder<> *IB);
 };
 
+namespace dsa {
+
+/*!
+ * \brief The visitor for each sub DFG.
+ */
+struct DFGVisitor {
+  virtual void Visit(DFGBase *);
+  virtual void Visit(DedicatedDFG *);
+  virtual void Visit(TemporalDFG *);
+};
+
+}
+
 
 /// The class of the base dfg
-class DfgBase {
+class DFGBase {
 public:
-  enum DfgKind {
+  enum DFGKind {
     Unknown,
     Dedicated,
     Temporal,
@@ -59,24 +73,23 @@ public:
 
   /// DFG #ID in the .dfg file.
   int ID{-1};
-  /// The DfgFile contains this Dfg
-  DfgFile *Parent;
+  /// The DFGFile contains this DFG
+  DFGFile *Parent;
   /// The instructions to be emitted as DFG
-  SmallVector<DfgEntry*, 0> Entries;
+  SmallVector<DFGEntry*, 0> Entries;
   /// Find a value among the compute bodies
   std::string ValueToOperandText(Value *Val, int Vec = -1);
   /// To unify the comparisons
   std::map<std::pair<Value*, Value*>, Predicate*> Comparison;
 
-  DfgKind Kind;
+  DFGKind Kind;
 
   std::vector<Instruction*> InjectedCode;
 
-  DfgBase(DfgFile *);
+  DFGBase(DFGFile *);
 
-public:
-  friend class DfgFile;
-  friend struct DfgEntry;
+  friend class DFGFile;
+  friend struct DFGEntry;
   friend struct StreamOutPort;
   friend struct ComputeBody;
   friend struct PortBase;
@@ -103,28 +116,21 @@ public:
   virtual int getUnroll() = 0;
   /// Get the unroll factor of the DFG wrapped in LLVM data structure
   virtual Value *UnrollConstant();
-  /// Initialize the dfg's instructions
-  virtual void InitEntries() = 0;
-  /// After gathering all the entries, finalize their #ID
-  void FinalizeEntryID();
-  /// Gather the instructions to be converted to entries
-  void InstsToEntries(iterator_range<BasicBlock::iterator> IRange,
-                      std::set<Instruction*> &Visited);
-  /// Reorder the entries in topological order
-  void ReorderEntries();
-  /// Clean up the dependences among entries
-  /// Specifically, fill the predicate information, and add register write
-  void CleanupEntryDependences();
-  /// Add a binary operation in the DFG as well as its affiliations (Input/Output)
-  void AnalyzeEntryOp(Instruction *Inst);
+
+  /*!
+   * \brief Entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGVisitor *);
+
+
+  /// TODO(@were): Decouple and remove all these.
+  // {
   /// Check if this block belong to the DFGs
-  DfgBase *BelongOtherDFG(Instruction *I);
+  DFGBase *BelongOtherDFG(Instruction *I);
   /// Check if a value is in this DFG
-  DfgEntry *InThisDFG(Value *Val);
+  DFGEntry *InThisDFG(Value *Val);
   /// The default position to inject the instructions
   virtual Instruction* DefaultIP();
-  /// Differentiate indirect or direct memory streams
-  DfgEntry *DifferentiateMemoryStream(LoadInst *Load);
   /// Find the predicate that can be merged into one.
   Predicate* FindEquivPredicate(Value *LHS, Value *RHS);
 
@@ -149,24 +155,23 @@ public:
   /// The Wrap indicates the "10" here.
   Instruction *InjectRepeat(Value *Prime, Value *Wrap, int64_t Stretch, Value *Val, int Port);
 
-  DfgKind getKind() const;
+  DFGKind getKind() const;
 
   /// Analyze data stream
   virtual AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes) {
     return AnalyzedStream();
   }
+  // }
 
   /// Get the indirect port number.
   int getNextIND();
   /// Get the next reserved port number for random use.
   /// FIXME: I am not sure if it is good. Do we need a systematic way to manage all the port?
   int getNextReserved();
-  /// Inspect the consumers of the given instruciton.
-  void InspectConsumers(Instruction *Inst);
   /// The scope of the DFG to be offload
   virtual bool InThisScope(Instruction *) = 0;
 
-  static bool classof(DfgBase *DB) {
+  static bool classof(DFGBase *DB) {
     return true;
   }
 
@@ -177,23 +182,23 @@ public:
 };
 
 /// The class holds the DFG information
-class DfgFile {
+class DFGFile {
 
   std::string FileName;
   Function &Func;
   Instruction *Config, *Fence;
   StreamSpecialize *Query;
-  /// DFGs included by this DfgFile
-  std::vector<DfgBase*> DFGs;
+  /// DFGs included by this DFGFile
+  std::vector<DFGBase*> DFGs;
   std::map<Value *, Value *> AddrsOnSpad;
 
   bool AllInitialized{false};
 
 public:
-  friend class DfgBase;
-  friend class DedicatedDfg;
-  friend class TemporalDfg;
-  friend struct DfgEntry;
+  friend class DFGBase;
+  friend class DedicatedDFG;
+  friend class TemporalDFG;
+  friend struct DFGEntry;
   friend struct StreamOutPort;
   friend struct MemPort;
   friend struct PortMem;
@@ -207,17 +212,16 @@ public:
   friend struct InputPort;
   friend struct AtomicPortMem;
 
-  int TempCnt{0};
-
   /// The constructor
-  DfgFile(StringRef Name, Function &F, IntrinsicInst *Start, IntrinsicInst *End,
-          StreamSpecialize *SS);
+  DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query);
+
+  /*!
+   * \brief Get the name of the DFG.
+   */
+  const std::string &getName();
+
   /// Add the given DFG to this file
-  void addDfg(DfgBase *DFG);
-  /// Initialize all the DFGs
-  void InitAllDfgs();
-  /// Emit the dfg to file so that it can be scheduled
-  void EmitAndScheduleDfg();
+  void addDFG(DFGBase *DFG);
   /// Analyze the data streams
   void InjectStreamIntrinsics();
   /// Erase all the instructions offloaded to CGRA
@@ -235,22 +239,20 @@ public:
 };
 
 /// The class of the temporal DFG
-class TemporalDfg : public DfgBase {
+class TemporalDFG : public DFGBase {
 
-  IntrinsicInst *Begin, *End;
-
-  Instruction *IP{nullptr};
 
 public:
-  friend class DfgFile;
-  friend struct DfgEntry;
+  IntrinsicInst *Begin, *End;
+  Instruction *IP{nullptr};
+
+  friend class DFGFile;
+  friend struct DFGEntry;
   friend struct StreamOutPort;
   friend struct ComputeBody;
 
-  TemporalDfg(DfgFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
+  TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
 
-  /// Initialize the dfg's instructions
-  void InitEntries() override;
   /// Return the blocks of the DFG
   SmallVector<BasicBlock*, 0> getBlocks() override;
   /// Dump the DFG to text format
@@ -266,24 +268,18 @@ public:
   AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes) override;
   /// The scope of the DFG to be offload
   bool InThisScope(Instruction *I) override;
+  /*!
+   * \brief Entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGVisitor *) override;
 
-  static bool classof(const DfgBase *DB) {
+  static bool classof(const DFGBase *DB) {
     return DB->getKind() == Temporal;
   }
 };
 
 /// The class of the dedicated DFG
-class DedicatedDfg : public DfgBase {
-  /// The loop levels from dfg to stream pragma
-  SmallVector<Loop*, 0> LoopNest;
-  /// How many times the instances should be duplicated
-  int UnrollFactor;
-  /// Blocks in this path of loop nest
-  std::set<BasicBlock*> Blocks;
-  /// The insert point of the instructions
-  BasicBlock *Preheader;
-  /// Prologue IP
-  Instruction *PrologueIP;
+class DedicatedDFG : public DFGBase {
 
   /// The current fill mode
   enum FillMode {
@@ -299,9 +295,20 @@ class DedicatedDfg : public DfgBase {
   bool ConsumedByAccumulator(MemPort *MP);
 
 public:
-  friend class DfgFile;
-  friend class DfgBase;
-  friend struct DfgEntry;
+  /// The loop levels from dfg to stream pragma
+  SmallVector<Loop*, 0> LoopNest;
+  /// How many times the instances should be duplicated
+  int UnrollFactor;
+  /// Blocks in this path of loop nest
+  std::set<BasicBlock*> Blocks;
+  /// The insert point of the instructions
+  BasicBlock *Preheader;
+  /// Prologue IP
+  Instruction *PrologueIP;
+
+  friend class DFGFile;
+  friend class DFGBase;
+  friend struct DFGEntry;
   friend struct MemPort;
   friend struct PortMem;
   friend struct StreamOutPort;
@@ -325,10 +332,8 @@ public:
                                    Instruction *InsertBefore);
 
 
-  DedicatedDfg(DfgFile *, Loop *, int);
+  DedicatedDFG(DFGFile *, Loop *, int);
 
-  /// Initialize the dfg's instructions
-  void InitEntries() override;
   /// Inputs of this DFG
   virtual void dump(std::ostringstream &os) override;
   /// Return the blocks of the DFG
@@ -346,52 +351,17 @@ public:
   Instruction* DefaultIP() override;
   /// The scope of the DFG to be offload
   bool InThisScope(Instruction *I) override;
+  /*!
+   * \brief Entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGVisitor *) override;
 
-  static bool classof(const DfgBase *DB) {
+  static bool classof(const DFGBase *DB) {
     return DB->getKind() == Dedicated ||
            DB->getKind() == DataMove;
   }
 };
 
-class DataMoveDfg : public DedicatedDfg {
- public:
-
-  DataMoveDfg(DfgFile *, Loop *, int);
-
-  /// Inputs of this DFG
-  void dump(std::ostringstream &os) override;
-
-  /// Initialize the dfg's instructions
-  void InitEntries() override;
-
-  static bool classof(const DfgBase *DB) {
-    return DB->getKind() == DataMove;
-  }
-};
-
-class IntrinDfg : public DfgBase {
-
- public:
-  IntrinsicInst *Intrin;
-  IntrinDfg(DfgFile &DF, IntrinsicInst *Intrin_) : DfgBase(&DF), Intrin(Intrin_) {}
-
-  Instruction *DefaultIP() override {
-    return Intrin;
-  }
-
-  bool Contains(Instruction *Inst) override {
-    return Inst == Intrin;
-  }
-
-  /// All these are not supposed to be used!
-  SmallVector<BasicBlock*, 0> getBlocks() override { assert(0); }
-  bool Contains(BasicBlock *) override { assert(0); }
-  int getUnroll() override { assert(0); }
-  Value *UnrollConstant() override { assert(0); }
-  void InitEntries() override { assert(0); }
-  /// The scope of the DFG to be offload
-  bool InThisScope(Instruction *I) override;
-};
 
 namespace dsa {
 namespace inject {
@@ -408,7 +378,7 @@ namespace inject {
  */
 MemoryType
 InjectLinearStream(IRBuilder<> *IB,
-                   const std::vector<StreamSpecialize::StickyRegister> &Regs,
+                   const RegisterFile &Regs,
                    int PortNum, const AnalyzedStream &Stream,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType);
 
@@ -416,14 +386,13 @@ struct DSAIntrinsicEmitter {
   bool Prepass{true};
   IRBuilder<> *IB;
   std::vector<CallInst*> res;
-  std::vector<StreamSpecialize::StickyRegister> Regs;
+  RegisterFile Regs;
 
   struct REG {
     static std::stack<IRBuilder<>*> IBStack;
     Value *value{nullptr};
     REG() {}
     REG(Value *value_) : value(value_) {}
-    // REG(uint64_t x) : value(IB->getInt64(x)) {}
     REG(uint64_t x) {
       value = IBStack.top()->getInt64(x);
     }
@@ -431,7 +400,7 @@ struct DSAIntrinsicEmitter {
   };
 
   DSAIntrinsicEmitter(IRBuilder<> *IB_,
-                      const std::vector<StreamSpecialize::StickyRegister> &Regs_) : IB(IB_), Regs(Regs_) {
+                      const RegisterFile &Regs_) : IB(IB_), Regs(Regs_) {
     REG::IBStack.push(IB_);
   }
 
@@ -547,6 +516,115 @@ struct DSAIntrinsicEmitter {
 
 #include "intrin_impl.h"
 
+};
+
+struct AffinedInjector {
+  IRBuilder<> *IB;
+  SCEVExpander *SEE;
+  DSAIntrinsicEmitter DIE;
+  AffinedInjector(IRBuilder<> *IB_, SCEVExpander *SEE_,
+                  const std::vector<dsa::utils::StickyRegister> &Regs) : IB(IB_), SEE(SEE_), DIE(IB_, Regs) {}
+};
+
+struct RepeatInjector : AffinedInjector {
+  RepeatInjector(
+    IRBuilder<> *IB, SCEVExpander *SEE,
+    const std::vector<dsa::utils::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
+
+  void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops, int Port, int Unroll) {
+    CHECK(Loops.size() == LI->Coef.size() || LI->Coef.empty());
+    Value *Repeat = IB->getInt64(1);
+    int N = LI->Coef.empty() ? Loops.size() : LI->PatialInvariant();
+    for (int i = 0; i < N; ++i) {
+      auto Coef = LI->Coef[i]->ConstInt();
+      CHECK(Coef && *Coef == 0);
+      if (!Loops[i]->Coef.empty()) {
+        CHECK(i == 0) << "Only the inner most dimension supports repeat stretch.";
+        for (int j = 0; j < N; ++j) {
+          if (j == 1) {
+            continue;
+          }
+          auto CI = Loops[i]->Coef[j]->ConstInt();
+          CHECK(CI && *CI == 0);
+        }
+        DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, Unroll);
+        DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, SEE->expandCodeFor(LI->Coef[i]->Coef[1]->Base));
+      }
+      auto Current = IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Base), IB->getInt64(1));
+      if (i == 0 && Unroll != 1) {
+        Current = IB->CreateSub(Current, IB->getInt64(1));
+        Current = IB->CreateSDiv(Current, IB->getInt64(Unroll));
+        Current = IB->CreateAdd(Current, IB->getInt64(1));
+      }
+      Repeat = IB->CreateMul(Repeat, Current);
+    }
+    DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
+  }
+};
+
+struct LinearInjector : AffinedInjector {
+
+  LinearInjector(
+    IRBuilder<> *IB, SCEVExpander *SEE,
+    const std::vector<dsa::utils::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
+
+  void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops,
+              int Port, MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
+    if (auto LII = LI->Invariant()) {
+      DIE.INSTANTIATE_1D_STREAM(
+        SEE->expandCodeFor(LII), IB->getInt64(0), IB->getInt64(1),
+        Port, PP, DSA_Access, MO, MT, DType, 0);
+      return;
+    }
+    CHECK(Loops.size() == LI->Coef.size()) << Loops.size() << " != " << LI->Coef.size();
+    int Dim = Loops.size() - LI->PatialInvariant();
+    CHECK(0 <= Dim && Dim <= 3) << Dim;
+    auto Start = SEE->expandCodeFor(LI->Base);
+    int i = LI->PatialInvariant();
+    switch (Dim) {
+      case 0: {
+        DIE.INSTANTIATE_1D_STREAM(
+          Start, IB->getInt64(0), IB->getInt64(1),
+          Port, PP, DSA_Access, MO, MT, DType, 0);
+        break;
+      }
+      case 1: {
+        auto N = Loops[i]->Invariant();
+        CHECK(N) << "No stretch should be in 1d stream! " << Loops[i]->toString();
+        auto Stride = LI->Coef[i]->Invariant();
+        CHECK(Stride) << "Stride should not be stretched!";
+        DIE.INSTANTIATE_1D_STREAM(
+          Start, SEE->expandCodeFor(LI->Coef[i]->Invariant()),
+          IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1)),
+          Port, PP, DSA_Access, MO, MT, DType, 0);
+        break;
+      }
+      case 2: {
+        // TODO(@were): Make assumption check!
+        auto Length1D =
+          IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Base), IB->getInt64(1));
+        Value* Stretch = IB->getInt64(0);
+        if (!Loops[i]->Coef.empty()) {
+          Stretch = IB->CreateSDiv(SEE->expandCodeFor(Loops[i]->Coef[i + 1]->Base), IB->getInt64(DType));
+        }
+        auto Length2D =
+          IB->CreateAdd(SEE->expandCodeFor(Loops[i + 1]->Base), IB->getInt64(1));
+        auto Stride1D =
+          SEE->expandCodeFor(LI->Coef[i]->Invariant());
+        auto Stride2D =
+          IB->CreateSDiv(SEE->expandCodeFor(LI->Coef[i + 1]->Invariant()), IB->getInt64(DType));
+        DIE.INSTANTIATE_2D_STREAM(Start, Stride1D, Length1D, Stride2D, Stretch, Length2D,
+                                  Port, PP, DSA_Access, MO, MT, DType, 0);
+        break;
+      }
+      case 3: {
+        CHECK(false) << "Unsupported dimension: " << Dim;
+        break;
+      }
+      default:
+        CHECK(false) << "Unsupported dimension: " << Dim;
+    }
+  }
 };
 
 }

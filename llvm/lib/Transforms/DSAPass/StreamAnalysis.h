@@ -12,24 +12,50 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include "Util.h"
-#include "DfgEntry.h"
 #include "Pass.h"
 
 namespace dsa {
 namespace analysis {
 
-struct Dimension {
-  enum Type {
-    Invariant,
-    Affined,
-    Unknown
-  };
-  Type Ty;
-  ScalarEvolution *Stride;
-  ScalarEvolution *TripCount;
+
+/*!
+ * \brief Assuming the index expression is affined, we have sum(Loops[i] * Coef[i]) + Base.
+ */
+struct LinearInfo {
+  /*!
+   * \brief The coefficient of each loop variable.
+   */
+  std::vector<LinearInfo*> Coef;
+  /*!
+   * \brief The base coefficient
+   */
+  const SCEV *Base{nullptr};
+  /*!
+   * \brief Create loop invariant.
+   * \param N The number of levels of loop nest.
+   */
+  static LinearInfo *LoopInvariant(ScalarEvolution *SE, int N, const SCEV *Base);
+  /*!
+   * \brief Dump this result of analysis for debugging.
+   * \param Loops The loops on which analysis is based.
+   */
+  std::string toString(const std::vector<Loop*> &Loops = std::vector<Loop*>());
+  /*!
+   * \brief If this LinearInfo is a constant int, return the value, o.w. return nullptr.
+   */
+  const uint64_t *ConstInt() const;
+  /*!
+   * \brief If this value is a loop invariant, return the SCEV for expansion. O.w. return nullptr.
+   */
+  const SCEV *Invariant() const;
+  /*!
+   * \brief Return the loop level from which, this value is no longer a loop nest invariant.
+   */
+  int PatialInvariant() const;
 };
 
-void AnalyzeIndexExpr(ScalarEvolution *SE, Value *Index, std::vector<Loop*> LoopNest);
+LinearInfo*
+AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV* Index, const std::vector<Loop*> &LoopNest);
 
 }
 }

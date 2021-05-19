@@ -4,15 +4,16 @@
 #include "llvm/IR/Dominators.h"
 
 #include "Util.h"
-#include "DfgEntry.h"
+#include "DFGEntry.h"
 #include "Transformation.h"
+#include "StreamAnalysis.h"
 
 #define DEBUG_TYPE "stream-specialize"
 
 using namespace llvm;
 
 const char *KindStr[] = {
-  "DfgEntry",
+  "DFGEntry",
 
   // Computation {
   "ComputeStarts",
@@ -55,9 +56,11 @@ const char *KindStr[] = {
   // }
 };
 
-DfgEntry::DfgEntry(DfgBase *Parent_) : Parent(Parent_) {}
+DFGEntry::DFGEntry(DFGBase *Parent_) : Parent(Parent_) {
+  ID = Parent_->Entries.size();
+}
 
-Predicate *DfgEntry::getPredicate(int *x) {
+Predicate *DFGEntry::getPredicate(int *x) {
   auto DT = Parent->Parent->Query->DT;
 
   if (!UnderlyingInst())
@@ -107,7 +110,7 @@ Predicate *DfgEntry::getPredicate(int *x) {
    return nullptr;
 }
 
-int DfgEntry::getAbstainBit() {
+int DFGEntry::getAbstainBit() {
   if (auto Inst = UnderlyingInst()) {
     auto DT = Parent->Parent->Query->DT;
     auto CurrentBB = Inst->getParent();
@@ -141,19 +144,18 @@ int DfgEntry::getAbstainBit() {
   return 0;
 }
 
-std::string DfgEntry::NameInDfg(int vec) {
-  if (!ShouldUnroll())
-    return formatv("sub{0}_v{1}", Parent->ID, ID);
-  if (vec != -1)
-    return formatv("sub{0}_v{1}_{2}", Parent->ID, ID, vec);
+std::string DFGEntry::Name(int Idx) {
+  if (Idx != -1 && ShouldUnroll()) {
+    return formatv("sub{0}_v{1}_{2}", Parent->ID, ID, Idx);
+  }
   return formatv("sub{0}_v{1}_", Parent->ID, ID);
 }
 
-PortBase::PortBase(DfgBase *Parent_) : DfgEntry(Parent_), SoftPortNum(-1), IntrinInjected(false) {
+PortBase::PortBase(DFGBase *Parent_) : DFGEntry(Parent_), SoftPortNum(-1), IntrinInjected(false) {
   Kind = kPortBase;
 }
 
-OutputPort::OutputPort(DfgBase *Parent_, Value *Value_) : PortBase(Parent_) {
+OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) {
   auto Inst = dyn_cast<Instruction>(Value_);
   assert(Inst);
 
@@ -184,36 +186,36 @@ OutputPort::OutputPort(DfgBase *Parent_, Value *Value_) : PortBase(Parent_) {
   Kind = kOutputPort;
 }
 
-PortMem::PortMem(DfgBase *Parent_, StoreInst *Store_) :
+PortMem::PortMem(DFGBase *Parent_, StoreInst *Store_) :
   OutputPort(Parent_, Store_->getValueOperand()), Store(Store_) {
   Kind = kPortMem;
 }
 
-Accumulator::Accumulator(DfgBase *Parent_, Instruction *Operation_, CtrlSignal *Ctrl_) :
+Accumulator::Accumulator(DFGBase *Parent_, Instruction *Operation_, CtrlSignal *Ctrl_) :
   ComputeBody(Parent_, Operation_), Ctrl(Ctrl_) {
   Kind = kAccumulator;
 }
 
-InputPort::InputPort(DfgBase *Parent_) :
+InputPort::InputPort(DFGBase *Parent_) :
   PortBase(Parent_) {
   Kind = kInputPort;
 }
 
-MemPort::MemPort(DfgBase *Parent_, LoadInst *Load_) : InputPort(Parent_), Load(Load_) {
+MemPort::MemPort(DFGBase *Parent_, LoadInst *Load_) : InputPort(Parent_), Load(Load_) {
   Kind = kMemPort;
 }
 
-ComputeBody::ComputeBody(DfgBase *Parent_, Instruction *Operation_) :
-  DfgEntry(Parent_), Operation(Operation_) {
+ComputeBody::ComputeBody(DFGBase *Parent_, Instruction *Operation_) :
+  DFGEntry(Parent_), Operation(Operation_) {
   assert(CanBeAEntry(Operation_));
   Kind = kComputeBody;
 }
 
-CtrlSignal::CtrlSignal(DfgBase *Parent_) : InputPort(Parent_) {
+CtrlSignal::CtrlSignal(DFGBase *Parent_) : InputPort(Parent_) {
   Kind = kCtrlSignal;
 }
 
-CtrlMemPort::CtrlMemPort(DfgBase *Parent_, LoadInst *Load_, Value *Start_, Value *TripCnt_,
+CtrlMemPort::CtrlMemPort(DFGBase *Parent_, LoadInst *Load_, Value *Start_, Value *TripCnt_,
                          Predicate *Pred_, int Mask_) : InputPort(Parent_), Load(Load_),
                                                         Start(Start_), TripCnt(TripCnt_),
                                                         Pred(Pred_), Mask(Mask_) {
@@ -232,15 +234,15 @@ int PortBase::PortWidth() {
   return UnderlyingValue()->getType()->getScalarSizeInBits();
 }
 
-Instruction* DfgEntry::UnderlyingInst() {
+Instruction* DFGEntry::UnderlyingInst() {
   return nullptr;
 }
 
-Value* DfgEntry::UnderlyingValue() {
+Value* DFGEntry::UnderlyingValue() {
   return UnderlyingInst();
 }
 
-bool DfgEntry::IsInMajor() {
+bool DFGEntry::IsInMajor() {
   if (!UnderlyingInst()) {
     return false;
   }
@@ -281,15 +283,15 @@ Value *InputConst::UnderlyingValue() {
   return Val;
 }
 
-InputConst::InputConst(DfgBase *Parent_, Value *Val_) : InputPort(Parent_), Val(Val_) {
+InputConst::InputConst(DFGBase *Parent_, Value *Val_) : InputPort(Parent_), Val(Val_) {
   Kind = kInputConst;
 }
 
-StreamInPort::StreamInPort(DfgBase *Parent_, Instruction *Inst) : InputPort(Parent_), DataFrom(Inst) {
+StreamInPort::StreamInPort(DFGBase *Parent_, Instruction *Inst) : InputPort(Parent_), DataFrom(Inst) {
   Kind = kStreamInPort;
 }
 
-StreamOutPort::StreamOutPort(DfgBase *Parent_, Instruction *Inst) : OutputPort(Parent_, Inst) {
+StreamOutPort::StreamOutPort(DFGBase *Parent_, Instruction *Inst) : OutputPort(Parent_, Inst) {
   Kind = kStreamOutPort;
 }
 
@@ -314,7 +316,8 @@ StreamInPort *StreamOutPort::FindConsumer() {
         return SIP;
     }
   }
-  assert(false && "Stream I/O should be in pairs!");
+  CHECK(false) << "Cannot find consumer for " << *UnderlyingInst();
+  return nullptr;
 }
 
 std::vector<OutputPort*> ComputeBody::GetOutPorts() {
@@ -343,7 +346,7 @@ std::vector<OutputPort*> ComputeBody::GetOutPorts() {
   return Res;
 }
 
-bool DfgEntry::ShouldUnroll() {
+bool DFGEntry::ShouldUnroll() {
   if (Parent->getUnroll() <= 1)
       return false;
   if (!IsInMajor())
@@ -352,7 +355,7 @@ bool DfgEntry::ShouldUnroll() {
 }
 
 bool ComputeBody::ShouldUnroll() {
-  if (!DfgEntry::ShouldUnroll())
+  if (!DFGEntry::ShouldUnroll())
     return false;
   auto Inst = UnderlyingInst();
   for (size_t i = 0; i < Inst->getNumOperands(); ++i) {
@@ -372,26 +375,26 @@ bool CtrlSignal::ShouldUnroll() {
   return false;
 }
 
-bool PortMem::ShouldUnroll() {
-  if (!DfgEntry::ShouldUnroll())
+bool OutputPort::ShouldUnroll() {
+  if (!DFGEntry::ShouldUnroll())
     return false;
-  if (auto DD = dyn_cast<DedicatedDfg>(Parent))
-    return !DD->InnerMost()->isLoopInvariant(Store->getPointerOperand());
-  return false;
+  auto OV = Parent->InThisDFG(Output);
+  CHECK(OV);
+  return OV->ShouldUnroll();
 }
 
 bool MemPort::ShouldUnroll() {
-  if (!DfgEntry::ShouldUnroll())
+  if (!DFGEntry::ShouldUnroll())
     return false;
-  if (auto DD = dyn_cast<DedicatedDfg>(Parent))
+  if (auto DD = dyn_cast<DedicatedDFG>(Parent))
     return !DD->InnerMost()->isLoopInvariant(Load->getPointerOperand());
   return false;
 }
 
 bool IndMemPort::ShouldUnroll() {
-  if (!DfgEntry::ShouldUnroll())
+  if (!DFGEntry::ShouldUnroll())
     return false;
-  if (auto DD = dyn_cast<DedicatedDfg>(Parent))
+  if (auto DD = dyn_cast<DedicatedDFG>(Parent))
     return !DD->InnerMost()->isLoopInvariant(Index->Load->getPointerOperand());
   return false;
 
@@ -412,59 +415,12 @@ bool HasOtherUser(InputPort *IP, Value *Val) {
   return false;
 }
 
-void InputPort::EmitInPort(std::ostringstream &os) {
-
-  if (!Parent->Parent->Query->MF.PRED) {
-    bool OnlyPredicate{true};
-    for (auto User : UnderlyingInst()->users()) {
-      auto Entry = Parent->InThisDFG(User);
-      if (Entry && !isa<Predicate>(Entry)) {
-        OnlyPredicate = false;
-        break;
-      }
-    }
-    if (OnlyPredicate) {
-      return;
-    }
-  }
-
-  // FIXME: We need also inspect all the consumers to make sure that
-  //        this indirect memory is not used by other instructions.
-  if (auto IMP = dyn_cast<IndMemPort>(this)) {
-    if (IMP->duplicated()) {
-      return;
-    }
-  }
-
-  if (!HasOtherUser(this, UnderlyingInst())) {
-    return;
-  }
-
-  os << "# From Inst: " << dump() << "\n";
-  std::ostringstream oss;
-  Meta.to_pragma(oss);
-  os << oss.str();
-
-  os << "Input" << PortWidth() << ": " << NameInDfg();
-  if (ShouldUnroll())
-    os << "[" << Parent->getUnroll() << "]";
-  os << "\n";
-}
-
-void InputConst::EmitInPort(std::ostringstream &os) {
-  if (!HasOtherUser(this, Val)) {
-    return;
-  }
-  os << "# " << dump() << "\n";
-  os << "Input" << PortWidth() << ": " << NameInDfg() << "\n";
-}
-
-int DfgEntry::Index() {
+int DFGEntry::Index() {
   assert(ID != -1);
   return ID;
 }
 
-void DfgEntry::dump(std::ostringstream &os) {
+void DFGEntry::dump(std::ostringstream &os) {
   os << "[" << (void*) this << "] " << KindStr[Kind] << " (" << (void*) getPredicate() << ")";
   if (UnderlyingInst()) {
     std::string res;
@@ -476,7 +432,7 @@ void DfgEntry::dump(std::ostringstream &os) {
   }
 }
 
-bool DfgEntry::OperandReady(std::set<Value*> &Ready) {
+bool DFGEntry::OperandReady(std::set<Value*> &Ready) {
   auto Inst = UnderlyingInst();
   for (size_t i = 0; i < Inst->getNumOperands(); ++i) {
     auto InstOperand = Inst->getOperand(i);
@@ -526,7 +482,7 @@ Value *Accumulator::NumValuesProduced() {
           }
         }
         if (!Found) {
-          auto DD = dyn_cast<DedicatedDfg>(Parent);
+          auto DD = dyn_cast<DedicatedDFG>(Parent);
           assert(DD);
           for (size_t k = 0; k < DD->LoopNest.size(); ++k) {
             if (DD->LoopNest[k]->getBlocksSet().count(IB)) {
@@ -544,7 +500,7 @@ Value *Accumulator::NumValuesProduced() {
 }
 
 int MemPort::FillMode() {
-  if (auto DD = dyn_cast<DedicatedDfg>(Parent)) {
+  if (auto DD = dyn_cast<DedicatedDFG>(Parent)) {
     if (Parent->getUnroll() <= 1)
       return DP_NoPadding;
     return DD->ConsumedByAccumulator(this) ? DP_PostStrideZero : DP_PostStridePredOff;
@@ -552,7 +508,7 @@ int MemPort::FillMode() {
   return DP_NoPadding;
 }
 
-IndMemPort::IndMemPort(DfgBase *Parent_, LoadInst *Index_, LoadInst *Load) : InputPort(Parent_),
+IndMemPort::IndMemPort(DFGBase *Parent_, LoadInst *Index_, LoadInst *Load) : InputPort(Parent_),
   Load(Load) {
   Index = new MemPort(Parent, Index_);
   Kind = kIndMemPort;
@@ -571,7 +527,7 @@ std::string getOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
     OpStr = "compare";
     BitWidth = Cmp->getOperand(0)->getType()->getScalarSizeInBits();
   } else if (auto Call = dyn_cast<CallInst>(Inst)) {
-    assert(Call);
+    CHECK(Call);
     OpStr = Call->getCalledFunction()->getName().str();
   } else {
     OpStr = Inst->getOpcodeName();
@@ -603,8 +559,8 @@ std::string ValueToOperandText(Value *Val) {
     return formatv("{0}", *RI);
   }
 
-  Val->dump();
-  assert(0 && "The value requested not found!");
+  CHECK(false) << "Cannot dump " << *Val;
+  return "";
 }
 
 bool Predicate::addCond(Instruction *Inst) {
@@ -652,7 +608,7 @@ struct ControlBit {
   std::ostringstream SubCtrl[3];
   Predicate *Pred{nullptr};
 
-  void addControlledMemoryStream(int Idx, DfgEntry *DE) {
+  void addControlledMemoryStream(int Idx, DFGEntry *DE) {
     if (auto CMP = dyn_cast<CtrlMemPort>(DE)) {
        if (Pred == nullptr) {
          Pred = CMP->Pred;
@@ -711,7 +667,7 @@ struct ControlBit {
 // TODO(@were): Do I need to support vectorized comparison?
 void Predicate::EmitCond(std::ostringstream &os) {
 
-  if (!Parent->Parent->Query->MF.PRED) {
+  if (!dsa::utils::ModuleContext().PRED) {
     return;
   }
 
@@ -726,13 +682,13 @@ void Predicate::EmitCond(std::ostringstream &os) {
   }
 
   ControlBit CtrlBit;
-  os << NameInDfg(-1) << " = Compare" << Cond[0]->getOperand(0)->getType()->getScalarSizeInBits()
+  os << Name(-1) << " = Compare" << Cond[0]->getOperand(0)->getType()->getScalarSizeInBits()
      << "(";
   for (size_t i = 0; i < Cond[0]->getNumOperands(); ++i) {
     auto Val = Cond[0]->getOperand(i);
     if (i) os << ", ";
     if (auto EntryOp = Parent->InThisDFG(Val)) {
-      os << EntryOp->NameInDfg(-1);
+      os << EntryOp->Name(-1);
       CtrlBit.addControlledMemoryStream(i, EntryOp);
       if (auto CMP = dyn_cast<CtrlMemPort>(EntryOp))
         CMP->ForPredicate = true;
@@ -745,7 +701,7 @@ void Predicate::EmitCond(std::ostringstream &os) {
     if (CtrlBit.Pred == this)
       os << ", self=";
     else
-      os << ", ctrl=" << CtrlBit.Pred->NameInDfg(-1);
+      os << ", ctrl=" << CtrlBit.Pred->Name(-1);
     os << "{" << CtrlBit.finalize() << "}";
   }
 
@@ -763,7 +719,7 @@ AtomicPortMem *ComputeBody::isAtomic() {
 
 void ComputeBody::EmitAtomic(std::ostringstream &os) {
   if (isImmediateAtomic()) {
-    os << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": " << NameInDfg();
+    os << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": " << Name();
     if (ShouldUnroll())
       os << "[" << Parent->getUnroll() << "]";
     os << "\n";
@@ -779,121 +735,8 @@ AtomicPortMem *ComputeBody::isImmediateAtomic() {
   return nullptr;
 }
 
-void ComputeBody::EmitCB(std::ostringstream &os) {
-
-  // If this ComputeBody is handled by a atomic operation skip it!
-  if (isAtomic())
-    return;
-
-  os << "# " << dump() << "\n";
-
-  for (int vec = 0; vec < (ShouldUnroll() ? Parent->getUnroll() : 1); ++vec) {
-    os << NameInDfg(vec) << " = " << getOperationStr(Operation, false, false) << "(";
-    ControlBit CtrlBit;
-
-    if (auto Call = dyn_cast<CallInst>(Operation)) {
-      for (size_t i = 0; i < Call->getNumArgOperands(); ++i) {
-        auto Val = Call->getArgOperand(i);
-        if (i) os << ", ";
-        if (auto EntryOp = Parent->InThisDFG(Val)) {
-          os << EntryOp->NameInDfg(vec);
-          CtrlBit.addControlledMemoryStream(i, EntryOp);
-        } else {
-          os << ValueToOperandText(Val);
-        }
-      }
-    } else {
-      for (size_t i = 0; i < Operation->getNumOperands(); ++i) {
-        auto Val = Operation->getOperand(i);
-        if (i) os << ", ";
-        if (auto EntryOp = Parent->InThisDFG(Val)) {
-          os << EntryOp->NameInDfg(vec);
-          CtrlBit.addControlledMemoryStream(i, EntryOp);
-        } else {
-          os << ValueToOperandText(Val);
-        }
-      }
-    }
-
-    if (Parent->Parent->Query->MF.PRED) {
-      if (getPredicate())
-        CtrlBit.updateAbstain(getAbstainBit(), false);
-      if (!CtrlBit.empty()) {
-        os << ", ctrl=" << CtrlBit.Pred->NameInDfg(vec) << "{" << CtrlBit.finalize() << "}";
-      }
-    }
-
-    os << ")\n";
-  }
-}
-
-void Accumulator::EmitCB(std::ostringstream &os) {
-  os << "# " << dump() << "\n";
-
-  auto Inst = Operation;
-  std::queue<std::string> Q;
-  auto Reduce = getOperationStr(Inst, false, false);
-  ControlBit CtrlBit;
-
-  for (int vec = 0; vec < Parent->getUnroll(); ++vec) {
-    for (size_t j = 0; j < 2; ++j) {
-      auto Operand = Inst->getOperand(j);
-      if (!isa<PHINode>(Operand)) {
-        auto Entry = Parent->InThisDFG(Operand);
-        assert(Entry);
-        Q.push(Entry->NameInDfg(vec));
-      }
-    }
-  }
-
-  int &TempCnt = Parent->Parent->TempCnt;
-  while (Q.size() > 1) {
-    auto A = Q.front(); Q.pop(); assert(!Q.empty());
-    auto B = Q.front(); Q.pop();
-    os << formatv("TMP{0} = {1}({2}, {3})", TempCnt, Reduce, A, B).str() << "\n";
-    Q.push(formatv("TMP{0}", TempCnt++));
-  }
-
-  auto P = getPredicate();
-  os << NameInDfg() << " = " << getOperationStr(Inst, true, P != nullptr) << "(" << Q.front()
-     << ", ";
-
-  if (Parent->Parent->Query->MF.PRED) {
-    if (P || !CtrlBit.empty()) {
-      CtrlBit.updateAbstain(this->getAbstainBit(), true);
-      os << "ctrl=" << P->NameInDfg(-1) << "{" << CtrlBit.finalize() << "}";
-    } else {
-      os << Ctrl->NameInDfg();
-    }
-  } else {
-    os << "ctrl=" << Ctrl->NameInDfg() << "{2:d}";
-  }
-
-  os << ")\n";
-}
-
-void OutputPort::EmitOutPort(std::ostringstream &os) {
-  os << "# From Inst: " << dump() << "\n";
-  std::ostringstream oss;
-  Meta.to_pragma(oss);
-  os << oss.str();
-  auto Entry = Parent->InThisDFG(Output);
-  assert(Entry);
-  os << "Output" << PortWidth() << ": " << Entry->NameInDfg();
-  if (Entry->ShouldUnroll())
-    os << "[" << Parent->getUnroll() << "]";
-  os << "\n";
-}
-
-void CtrlSignal::EmitInPort(std::ostringstream &os) {
-  if (!Controlled->getPredicate() || !Parent->Parent->Query->MF.PRED) {
-    os << "# [Control Signal]" << Controlled->dump() << "\n";
-    os << "Input: " << NameInDfg() << "\n";
-  }
-}
-
-Predicate::Predicate(DfgBase *Parent_, Instruction *Cond_) :
-  DfgEntry(Parent_), Cond{Cond_}, Reversed{false} {
+Predicate::Predicate(DFGBase *Parent_, Instruction *Cond_) :
+  DFGEntry(Parent_), Cond{Cond_}, Reversed{false} {
   Kind = kPredicate;
 }
 
@@ -931,7 +774,7 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto &Ctx = Parent->getCtx();
   auto VoidTy = Type::getVoidTy(Ctx);
 
-  if (!Parent->Parent->Query->MF.IND) {
+  if (!dsa::utils::ModuleContext().IND) {
     createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r, r, i",
                        {Load, createConstant(Ctx, 1), createConstant(Ctx, SoftPortNum)},
                        Load->getNextNode());
@@ -984,7 +827,7 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
                               createConstant(Ctx, IBits / 8));
     auto GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
     DIE.SS_INDIRECT_READ(this->SoftPortNum, this->IndexOutPort, GEP->getOperand(0),
-                         Cur->Load->getType()->getScalarSizeInBits() / 8, Num, DMT_DMA, 0, 0);
+                         Cur->Load->getType()->getScalarSizeInBits() / 8, Num, DMT_DMA);
 
     // TODO: Support indirect read on the SPAD(?)
     Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int) ActualSrc]);
@@ -998,14 +841,14 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
 }
 
 bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
-  if (!Parent->Parent->Query->MF.REC)
+  if (!dsa::utils::ModuleContext().REC)
     return false;
 
   if (!IsInMajor())
     return false;
 
   // Wrappers
-  auto DFG = dyn_cast<DedicatedDfg>(Parent);
+  auto DFG = dyn_cast<DedicatedDFG>(Parent);
 
   if (!DFG)
     return false;
@@ -1113,7 +956,7 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
                << ", make sure your variable recur distance will not overwhlem the FIFO buffer!";
       }
       PM->Meta.set("dest", "localport");
-      PM->Meta.set("dest", MP->NameInDfg());
+      PM->Meta.set("dest", MP->Name());
       {
         std::ostringstream oss;
         oss << Conc * 8 / PortWidth();
@@ -1132,13 +975,32 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
 
 }
 
+void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE, IRBuilder<> *IB,
+                            const SCEV *Idx, std::vector<Loop*> LoopNest,
+                            dsa::inject::RepeatInjector &RI,
+                            dsa::inject::LinearInjector &LI,
+                            int Port, int Unroll, int DType,
+                            MemoryOperation MO, Padding Padding, MemoryType MT) {
+  auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
+  std::vector<dsa::analysis::LinearInfo*> LoopLI;
+  for (int i = 0, N = LoopNest.size(); i < N; ++i) {
+    auto CurDim = dsa::analysis::AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
+    LoopLI.push_back(CurDim);
+  }
+  if (MO == MemoryOperation::DMO_Read) {
+    RI.Inject(IdxLI, LoopLI, Port, Unroll);
+  }
+  LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
+}
+
+
 void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   IB->SetInsertPoint(this->Parent->DefaultIP());
 
   if (IntrinInjected)
     return;
 
-  if (!HasOtherUser(this, UnderlyingInst()) && !isa<DataMoveDfg>(Parent)) {
+  if (!HasOtherUser(this, UnderlyingInst())) {
     IntrinInjected = true;
     return;
   }
@@ -1158,6 +1020,24 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
     assert(false && "Predicated stream should be handled in CtrlMemPort.");
   }
 
+  if (auto DD = dyn_cast<DedicatedDFG>(DFG)) {
+    // FIXME(@were): Make this more unified.
+    SCEVExpander SEE(*Parent->Parent->Query->SE,
+                     Parent->Parent->Func.getParent()->getDataLayout(), "");
+    SEE.setInsertPoint(Parent->DefaultIP());
+    dsa::inject::RepeatInjector RI(IB, &SEE, Parent->Parent->Query->DSARegs);
+    dsa::inject::LinearInjector LI(IB, &SEE, Parent->Parent->Query->DSARegs);
+    std::vector<Loop*> LoopNest(DD->LoopNest.begin(), DD->LoopNest.end());
+    auto SE = Parent->Parent->Query->SE;
+    auto SCEVIdx = SE->getSCEV(MP->Load->getPointerOperand());
+    int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+    InjectLinearStreamImpl(SE, SEE, IB, SCEVIdx, LoopNest, RI, LI, MP->SoftPortNum,
+                           Parent->getUnroll(), DType, DMO_Read,
+                           (Padding) MP->FillMode(), DMT_DMA);
+    MP->IntrinInjected = true;
+    return;
+  }
+
   auto Analyzed = DFG->AnalyzeDataStream(
     MP->Load->getPointerOperand(),
     MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
@@ -1167,7 +1047,6 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
       IB->CreateLoad(MP->Load->getPointerOperand()), IB->getInt64Ty());
     DFG->InjectRepeat(Analyzed.AR, RepeatedConst, MP->SoftPortNum);
   } else {
-
     auto Fill = MP->FillMode();
     DFG->InjectRepeat(Analyzed.AR, nullptr, this->SoftPortNum);
     auto Src =
@@ -1186,7 +1065,24 @@ void PortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto DFG = Parent;
   if (PM->IntrinInjected)
     return;
+
   IB->SetInsertPoint(Parent->DefaultIP());
+  if (auto DD = dyn_cast<DedicatedDFG>(Parent)) {
+    SCEVExpander SEE(*Parent->Parent->Query->SE,
+                     Parent->Parent->Func.getParent()->getDataLayout(), "");
+    SEE.setInsertPoint(Parent->DefaultIP());
+    dsa::inject::RepeatInjector RI(IB, &SEE, Parent->Parent->Query->DSARegs);
+    dsa::inject::LinearInjector LI(IB, &SEE, Parent->Parent->Query->DSARegs);
+    std::vector<Loop*> LoopNest(DD->LoopNest.begin(), DD->LoopNest.end());
+    auto SE = Parent->Parent->Query->SE;
+    auto SCEVIdx = SE->getSCEV(PM->Store->getPointerOperand());
+    int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+    InjectLinearStreamImpl(SE, SEE, IB, SCEVIdx, LoopNest, RI, LI, PM->SoftPortNum,
+                           Parent->getUnroll(), DType, DMO_Write, DP_NoPadding, DMT_DMA);
+    PM->IntrinInjected = true;
+    return;
+  }
+
   LLVM_DEBUG(dbgs() << "Injecting intrin for PM: "; PM->UnderlyingInst()->dump());
   int Bytes = PM->Store->getValueOperand()->getType()->getScalarType()->getScalarSizeInBits() / 8;
   auto Analyzed = DFG->AnalyzeDataStream(PM->Store->getPointerOperand(), Bytes);
@@ -1228,7 +1124,7 @@ void PortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
 
 void InputConst::InjectStreamIntrinsic(IRBuilder<> *IB) {
 
-  if (auto DD = dyn_cast<DedicatedDfg>(Parent)) {
+  if (auto DD = dyn_cast<DedicatedDFG>(Parent)) {
     auto Analyzed = DD->AnalyzeDataStream(this->Val, Val->getType()->getScalarSizeInBits() / 8,
                                           true, Parent->DefaultIP());
     /// FIXME: Will this cause other problem?
@@ -1237,7 +1133,7 @@ void InputConst::InjectStreamIntrinsic(IRBuilder<> *IB) {
     //                 DD->ProdTripCount(1, DD->LoopNest.size(), Parent->DefaultIP()), 0,
     //                 Val, SoftPortNum);
   } else {
-    assert(isa<TemporalDfg>(Parent));
+    assert(isa<TemporalDFG>(Parent));
     Parent->InjectRepeat(IB->getInt64(1), IB->getInt64(1),
                          0, Val, SoftPortNum);
   }
@@ -1247,7 +1143,7 @@ void InputConst::InjectStreamIntrinsic(IRBuilder<> *IB) {
 
 void CtrlSignal::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto CS = this;
-  auto DD = dyn_cast<DedicatedDfg>(Parent);
+  auto DD = dyn_cast<DedicatedDFG>(Parent);
   assert(DD);
   auto InsertBefore = DD->DefaultIP();
   auto One = IB->getInt64(1);
@@ -1255,9 +1151,8 @@ void CtrlSignal::InjectStreamIntrinsic(IRBuilder<> *IB) {
 
   dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
 
-
   if (CS->Controlled->getPredicate()) {
-    if (Parent->Parent->Query->MF.PRED) {
+    if (dsa::utils::ModuleContext().PRED) {
       CS->IntrinInjected = true;
       LLVM_DEBUG(dbgs() << "Skipped:"; CS->dump());
     } else {
@@ -1294,13 +1189,13 @@ void CtrlMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto One = createConstant(Ctx, 1);
   auto Zero = createConstant(Ctx, 0);
 
-  if (!Parent->Parent->Query->MF.PRED) {
+  if (!dsa::utils::ModuleContext().PRED) {
     // PortNum == -1 indicates this port is omitted because of no predication support
     if (CMP->SoftPortNum != -1) {
       createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
                          {CMP->Load, One, createConstant(Ctx, CMP->SoftPortNum)},
                          Load->getNextNode());
-      auto DD = dyn_cast<DedicatedDfg>(Parent);
+      auto DD = dyn_cast<DedicatedDFG>(Parent);
       assert(DD && "This node only exists in stream DFGs");
       createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
                          {Zero, One, createConstant(Ctx, SoftPortNum)},
@@ -1375,7 +1270,7 @@ void StreamOutPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto SIP = SOP->FindConsumer();
   assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
   dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
-  if (auto DD = dyn_cast<DedicatedDfg>(SIP->Parent)) {
+  if (auto DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
     int Bytes = SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
     auto Analyzed = DD->AnalyzeDataStream(SOP->Output, Bytes, true, Parent->DefaultIP());
     /// FIXME: Will this cause other problem?
@@ -1384,7 +1279,7 @@ void StreamOutPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
     assert(IB);
     DIE.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, Analyzed.OuterRepeat,
                       SOP->Output->getType()->getScalarSizeInBits() / 8);
-  } else if (isa<TemporalDfg>(SIP->Parent)) {
+  } else if (isa<TemporalDFG>(SIP->Parent)) {
     // TODO: Support temporal stream
     DIE.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, IB->getInt64(1),
                       SOP->Output->getType()->getScalarSizeInBits() / 8);
@@ -1392,7 +1287,7 @@ void StreamOutPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   SOP->IntrinInjected = SIP->IntrinInjected = true;
 }
 
-AtomicPortMem::AtomicPortMem(DfgBase *Parent_, LoadInst *Index_, StoreInst *Store_,
+AtomicPortMem::AtomicPortMem(DFGBase *Parent_, LoadInst *Index_, StoreInst *Store_,
                              int OpCode_, Instruction *Op_, Value *Operand_) :
   OutputPort(Parent_, Store_->getValueOperand()), Index(new MemPort(Parent_, Index_)),
   Store(Store_), OpCode(OpCode_), Op(Op_), Operand(Operand_) {
@@ -1409,12 +1304,12 @@ Instruction *AtomicPortMem::UnderlyingInst() {
 }
 
 void AtomicPortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
-  if (!Parent->Parent->Query->MF.IND) {
-    if (auto DfgEntry = Parent->InThisDFG(Operand)) {
+  if (!dsa::utils::ModuleContext().IND) {
+    if (auto DFGEntry = Parent->InThisDFG(Operand)) {
       assert(false && "TODO: ss_recv operand from port!");
-      (void) DfgEntry;
+      (void) DFGEntry;
     } else {
-      (void) DfgEntry;
+      (void) DFGEntry;
     }
     IntrinInjected = true;
     Meta.set("cmd", "0.1");
@@ -1434,16 +1329,16 @@ void AtomicPortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
                                     SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
                                     this->Index->Load->getType()->getScalarSizeInBits() / 8);
   int OperandPort = -1;
-  auto DD = dyn_cast<DedicatedDfg>(Parent);
+  auto DD = dyn_cast<DedicatedDFG>(Parent);
   assert(DD);
   // FIXME: Is trip count a temporary solution?
   auto TripCnt = DD->ProdTripCount(DD->LoopNest.size(), DD->DefaultIP());
 
-  if (auto DfgEntry = Parent->InThisDFG(Operand)) {
-    if (auto CB = dyn_cast<ComputeBody>(DfgEntry)) {
+  if (auto DFGEntry = Parent->InThisDFG(Operand)) {
+    if (auto CB = dyn_cast<ComputeBody>(DFGEntry)) {
       assert(CB->isImmediateAtomic());
       OperandPort = CB->SoftPortNum;
-    } else if (auto IP = dyn_cast<InputPort>(DfgEntry)) {
+    } else if (auto IP = dyn_cast<InputPort>(DFGEntry)) {
       OperandPort = IP->SoftPortNum;
     }
   } else {
@@ -1501,4 +1396,45 @@ void AtomicPortMem::EmitOutPort(std::ostringstream &os) {
 
 int PortBase::VectorizeFactor() {
   return ShouldUnroll() ? Parent->getUnroll() : 1;
+}
+
+#define VISIT_IMPL(TYPE) void TYPE::Accept(dsa::DFGEntryVisitor *V) { V->Visit(this); }
+VISIT_IMPL(DFGEntry)
+VISIT_IMPL(ComputeBody)
+VISIT_IMPL(Predicate)
+VISIT_IMPL(Accumulator)
+VISIT_IMPL(PortBase)
+VISIT_IMPL(InputPort)
+VISIT_IMPL(CtrlMemPort)
+VISIT_IMPL(MemPort)
+VISIT_IMPL(StreamInPort)
+VISIT_IMPL(CtrlSignal)
+VISIT_IMPL(InputConst)
+VISIT_IMPL(OutputPort)
+VISIT_IMPL(PortMem)
+VISIT_IMPL(StreamOutPort)
+VISIT_IMPL(IndMemPort)
+VISIT_IMPL(AtomicPortMem)
+#undef VISIT_IMPL
+
+
+namespace dsa {
+
+void DFGEntryVisitor::Visit(DFGEntry *Node) { }
+void DFGEntryVisitor::Visit(ComputeBody *Node) { Visit(static_cast<DFGEntry*>(Node)); }
+void DFGEntryVisitor::Visit(Predicate *Node) { Visit(static_cast<DFGEntry*>(Node)); }
+void DFGEntryVisitor::Visit(Accumulator *Node) { Visit(static_cast<ComputeBody*>(Node)); }
+void DFGEntryVisitor::Visit(PortBase *Node) { Visit(static_cast<DFGEntry*>(Node)); }
+void DFGEntryVisitor::Visit(InputPort *Node) { Visit(static_cast<PortBase*>(Node)); }
+void DFGEntryVisitor::Visit(CtrlMemPort *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(MemPort *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(StreamInPort *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(CtrlSignal *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(InputConst *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(OutputPort *Node) { Visit(static_cast<PortBase*>(Node)); }
+void DFGEntryVisitor::Visit(PortMem *Node) { Visit(static_cast<OutputPort*>(Node)); }
+void DFGEntryVisitor::Visit(StreamOutPort *Node) { Visit(static_cast<OutputPort*>(Node)); }
+void DFGEntryVisitor::Visit(IndMemPort *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(AtomicPortMem *Node) { Visit(static_cast<OutputPort*>(Node)); }
+
 }

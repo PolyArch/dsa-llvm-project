@@ -29,7 +29,7 @@ Constant *createConstant(LLVMContext &Context, uint64_t Val, int Bits) {
   return Constant::getIntegerValue(IntegerType::get(Context, Bits), Bytes);
 }
 
-std::string funcNameToDfgName(const StringRef &Name) {
+std::string funcNameToDFGName(const StringRef &Name) {
   llvm::errs() << "\n";
   assert(Name.startswith(OffloadPrefix));
   if (Name.equals(OffloadPrefix))
@@ -150,5 +150,16 @@ bool isOne(Value *Val) {
   if (!CI)
     return false;
   return CI->getSExtValue() == 1;
+}
+
+namespace dsa {
+namespace utils {
+
+ModuleFlags &ModuleContext() {
+  static ModuleFlags Instance;
+  return Instance;
+}
+
+}
 }
 

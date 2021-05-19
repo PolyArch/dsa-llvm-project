@@ -1,18 +1,15 @@
+
 #include <cstdlib>
 #include <sstream>
 #include <fstream>
 #include <queue>
 #include <map>
 
-#include "llvm/ADT/BreadthFirstIterator.h"
-#include "llvm/Analysis/LoopAccessAnalysis.h"
-#include "llvm/Analysis/LoopAnalysisManager.h"
-#include "llvm/Analysis/OptimizationRemarkEmitter.h"
-#include "llvm/Support/Format.h"
-#include "llvm/Transforms/Utils/LoopUtils.h"
-#include "llvm/Transforms/Utils/UnrollLoop.h"
+#include "./llvm_common.h"
 
-#include "DfgEntry.h"
+#include "CodeXform.h"
+#include "DFGAnalysis.h"
+#include "DFGEntry.h"
 #include "Transformation.h"
 #include "Util.h"
 #include "Pass.h"
@@ -22,113 +19,101 @@ using namespace llvm;
 
 #define DEBUG_TYPE "stream-specialize"
 
-void EliminateTemporal(Function &F) {
-  std::vector<Instruction*> ToRemove;
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      auto Intrin = dyn_cast<IntrinsicInst>(&I);
-      if (!Intrin)
-        continue;
-      switch (Intrin->getIntrinsicID()) {
-        case Intrinsic::ss_temporal_region_start:
-        case Intrinsic::ss_temporal_region_end:
-          ToRemove.push_back(Intrin);
-          break;
-        default:
-          break;
-      }
+
+bool StreamSpecialize::runOnModule(Module &M) {
+
+  for (auto &F : M) {
+    if (F.isDeclaration()) {
+      continue;
     }
+    ACT = &getAnalysis<AssumptionCacheTracker>(F).getAssumptionCache(F);
+    LI = &getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
+    SE = &getAnalysis<ScalarEvolutionWrapperPass>(F).getSE();
+    DT = &getAnalysis<DominatorTreeWrapperPass>(F).getDomTree();
+    AAR = &getAnalysis<AAResultsWrapperPass>(F).getAAResults();
+    BFI = &getAnalysis<BlockFrequencyInfoWrapperPass>(F).getBFI();
+    MSSA = &getAnalysis<MemorySSAWrapperPass>(F).getMSSA();
+    runOnFunction(F);
   }
 
-  for (auto I : ToRemove) {
-    I->replaceAllUsesWith(UndefValue::get(I->getType()));
-    I->eraseFromParent();
-  }
-}
-
-std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>>
-GatherIntrinPairs(Function &F, llvm::Intrinsic::ID Kind) {
-  std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>> Res;
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      auto Start = dyn_cast<IntrinsicInst>(&I);
-      if (!Start || Start->getIntrinsicID() != Kind)
-        continue;
-      for (auto &AnotherBB : F) {
-        for (auto &AntherI : AnotherBB) {
-          auto End = dyn_cast<IntrinsicInst>(&AntherI);
-          if (!End || End->getOperand(0) != Start)
-            continue;
-          Res.emplace_back(Start, End);
-        }
-      }
+  // If we are not extracting DFG's, do not clean up the code with O3.
+  if (!dsa::utils::ModuleContext().EXTRACT) {
+    llvm::PassManagerBuilder PMB;
+    PMB.OptLevel = 3;
+    llvm::legacy::FunctionPassManager fpass(&M);
+    llvm::legacy::PassManager mpass;
+    PMB.populateFunctionPassManager(fpass);
+    PMB.populateModulePassManager(mpass);
+    PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
+    for (auto &F : M) {
+      runOnFunction(F);
     }
+    fpass.doFinalization();
+    mpass.run(M);
   }
-  return Res;
-}
 
-std::vector<StreamSpecialize::StickyRegister>
-InjectRegisterFile(IRBuilder<> *IB) {
-  std::vector<StreamSpecialize::StickyRegister> Res;
-  std::string TyName("reg.type");
-  auto RegType = StructType::create(TyName, IB->getInt64Ty(), IB->getInt8Ty());
-  for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
-    auto A = IB->CreateAlloca(RegType, nullptr, REG_NAMES[i]);
-    auto R = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(0)});
-    auto S = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(1)});
-    IB->CreateStore(IB->getInt64(REG_STICKY[i]), R);
-    IB->CreateStore(IB->getInt8(i == DSARF::TBC), S);
-    Res.emplace_back(A, R, S);
-  }
-  return Res;
+  return false;
 }
 
 bool StreamSpecialize::runOnFunction(Function &F) {
 
-  if (!MF.TEMPORAL) {
-    EliminateTemporal(F);
+  if (!dsa::utils::ModuleContext().TEMPORAL) {
+    dsa::xform::EliminateTemporal(F);
   }
 
   LLVM_DEBUG(dbgs() << "Working on " << F.getName() << "\n");
-  ACT = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-  LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  AAR = &getAnalysis<AAResultsWrapperPass>().getAAResults();
-  BFI = &getAnalysis<BlockFrequencyInfoWrapperPass>().getBFI();
-  MSSA = &getAnalysis<MemorySSAWrapperPass>().getMSSA();
 
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
 
-  {
-    int Cnt = 0;
-    auto ScopePairs = GatherIntrinPairs(F, Intrinsic::ss_config_start);
-    if (!ScopePairs.empty()) {
-      IB.SetInsertPoint(&F.getEntryBlock().back());
-      DSARegs = InjectRegisterFile(&IB);
+  auto ScopePairs = dsa::analysis::GatherConfigScope(F);
+  if (!ScopePairs.empty() && !dsa::utils::ModuleContext().EXTRACT) {
+    DSARegs = dsa::xform::InjectDSARegisterFile(F);
+  }
+  SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
+  dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE);
+  for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
+    std::string Name = F.getName().str() + "_dfg_" + std::to_string(i) + ".dfg";
+    auto Start = ScopePairs[i].first;
+    auto End = ScopePairs[i].second;
+    DFGFile DF(Name, Start, End, this);
+    dsa::analysis::ExtractDFGFromScope(DF, Start, End, DT, LI);
+    dsa::xform::EmitDFG(nullptr, &DF);
+    // dsa::xform::EmitDFG(&llvm::errs(), &DF);
+    // If extraction only, we do not schedule and analyze.
+    if (dsa::utils::ModuleContext().EXTRACT) {
+      continue;
     }
-    for (auto &Pair : ScopePairs) {
-      std::ostringstream OSS;
-      OSS << F.getName().bytes_begin() << "_dfg_" << Cnt++ << ".dfg";
-      DfgFile DFG(OSS.str(), F, Pair.first, Pair.second, this);
-      DFG.InspectSPADs();
-      DFG.InitAllDfgs();
-      DFG.EmitAndScheduleDfg();
-      DFG.InjectStreamIntrinsics();
-      if (MF.EXTRACT) {
-        DFG.EmitAndScheduleDfg();
-        continue;
-      }
-      DFG.EraseOffloadedInstructions();
+    auto SBCONFIG = getenv("SBCONFIG");
+    CHECK(SBCONFIG);
+    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
+    LLVM_DEBUG(INFO << Cmd);
+    CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
+    // TODO(@were): When making the DFG's of index expression is done, uncomment these.
+    // auto Graphs = DFG.DFGFilter<DFGBase>();
+    // std::vector<std::vector<int>> Ports(Graphs.size());
+    // for (int i = 0, n = Graphs.size(); i < n; ++i) {
+    //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
+    // }
+    // DF.InspectSPADs();
+    auto CI = dsa::analysis::ExtractDFGPorts(Name, DF);
+    dsa::xform::InjectConfiguration(CGC, CI, Start, End);
+    if (dsa::utils::ModuleContext().EXTRACT) {
+      continue;
     }
+    dsa::xform::InjectStreamIntrinsics(CGC, DF);
+    DF.EraseOffloadedInstructions();
+  }
+  if (!dsa::utils::ModuleContext().EXTRACT) {
     for (auto &Pair : ScopePairs) {
       Pair.second->eraseFromParent();
       Pair.first->eraseFromParent();
     }
+  } else {
+    return false;
   }
 
-  HandleMemIntrin(F);
+  // HandleMemIntrin(F);
 
   LLVM_DEBUG(
     llvm::errs() << "After transformation:\n";
@@ -139,7 +124,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
 }
 
 void StreamSpecialize::HandleMemIntrin(Function &F) {
-  DfgFile Dummy("dummy", F, nullptr, nullptr, this);
+  // FIXME(@were): After decoupling, we no longer need this.
+  DFGFile Dummy("dummy", nullptr, nullptr, this);
   std::vector<IntrinsicInst*> ToInject;
 
   for (auto &BB : F) {
@@ -164,12 +150,12 @@ void StreamSpecialize::HandleMemIntrin(Function &F) {
     AS0.Dimensions.emplace_back(Dst, Size, 0);
     AS1.Dimensions.emplace_back(Src, Size, 0);
 
-    IntrinDfg Dfg(Dummy, Intrin);
-    IBPtr->SetInsertPoint(Dfg.DefaultIP());
-    dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
-    dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
-    dsa::inject::DSAIntrinsicEmitter(IBPtr, DSARegs).SS_WAIT(~0ull);
-    Intrin->eraseFromParent();
+    // DedicatedDFG DFG(&Dummy, Intrin);
+    // IBPtr->SetInsertPoint(DFG.DefaultIP());
+    // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
+    // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
+    // dsa::inject::DSAIntrinsicEmitter(IBPtr, DSARegs).SS_WAIT(~0ull);
+    // Intrin->eraseFromParent();
   }
 
 }
@@ -184,16 +170,11 @@ void StreamSpecialize::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TargetTransformInfoWrapperPass>();
   AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<LoopAccessLegacyAnalysis>();
-  //AU.addRequired<DemandedBitsWrapperPass>();
   AU.addRequired<OptimizationRemarkEmitterWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<MemorySSAWrapperPass>();
-  AU.addPreserved<LoopInfoWrapperPass>();
-  //AU.addPreserved<BasicAAWrapperPass>();
-  //AU.addPreserved<GlobalsAAWrapperPass>();
-  AU.addPreserved<DependenceAnalysisWrapperPass>();
 }
 
 char StreamSpecialize::ID = 0;
 
-static RegisterPass<StreamSpecialize> X("stream-specialize", "Stream specialize the program...");
+static RegisterPass<StreamSpecialize> X("stream-specialize", "Decoupld-Spatial Specialized Transformation");
