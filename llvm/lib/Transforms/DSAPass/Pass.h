@@ -1,22 +1,21 @@
 #ifndef STREAM_SPECIALIZE_H_
 #define STREAM_SPECIALIZE_H_
 
-#include "llvm/Pass.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/DependenceAnalysis.h"
 #include "llvm/Analysis/DDG.h"
+#include "llvm/Analysis/DependenceAnalysis.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemorySSA.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Pass.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 #include "Util.h"
 
 using namespace llvm;
-
 
 struct StreamSpecialize : public ModulePass {
 
@@ -43,8 +42,6 @@ struct StreamSpecialize : public ModulePass {
   bool runOnModule(Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
   // }
-
-  void HandleMemIntrin(Function &F);
 
 };
 

@@ -5,23 +5,23 @@
 #include <sstream>
 #include <utility>
 
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/ScalarEvolutionExpressions.h"
-#include "llvm/Analysis/MemorySSAUpdater.h"
 #include "llvm/ADT/BreadthFirstIterator.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/MemorySSAUpdater.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/SROA.h"
-#include "llvm/Transforms/Utils/UnrollLoop.h"
-#include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#include "llvm/Transforms/Utils/UnrollLoop.h"
 
 #include "CodeXform.h"
 #include "StreamAnalysis.h"
@@ -40,12 +40,16 @@ using namespace llvm;
 namespace dsa {
 
 void DFGVisitor::Visit(DFGBase *Node) {}
-void DFGVisitor::Visit(DedicatedDFG *Node) { Visit(static_cast<DFGBase*>(Node)); }
-void DFGVisitor::Visit(TemporalDFG *Node) { Visit(static_cast<DFGBase*>(Node)); }
+void DFGVisitor::Visit(DedicatedDFG *Node) {
+  Visit(static_cast<DFGBase *>(Node));
+}
+void DFGVisitor::Visit(TemporalDFG *Node) {
+  Visit(static_cast<DFGBase *>(Node));
+}
 
 namespace inject {
 
-std::stack<IRBuilder<>*> DSAIntrinsicEmitter::REG::IBStack;
+std::stack<IRBuilder<> *> DSAIntrinsicEmitter::REG::IBStack;
 
 MemoryType
 InjectLinearStream(IRBuilder<> *IB,
@@ -57,18 +61,17 @@ InjectLinearStream(IRBuilder<> *IB,
   Value *Bytes = std::get<1>(Stream.Dimensions.back());
   Value *DTyValue = IB->getInt64(DType);
   if (Stream.Dimensions.size() == 1) {
-    DIE.INSTANTIATE_1D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue),
-                              PortNum, PP, DSA_Access, MO, MT, DType, 0);
+    DIE.INSTANTIATE_1D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue), PortNum,
+                              PP, DSA_Access, MO, MT, DType, 0);
     return DMT_DMA;
   } else if (Stream.Dimensions.size() == 2) {
     Value *Stride = std::get<0>(Stream.Dimensions[0]);
     Value *N = std::get<1>(Stream.Dimensions[0]);
     int Stretch = std::get<2>(Stream.Dimensions[0]);
-    DIE.INSTANTIATE_2D_STREAM(Start, DType,
-                              DIE.DIV(Bytes, DTyValue),
+    DIE.INSTANTIATE_2D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue),
                               DIE.DIV(Stride, DTyValue),
-                              IB->getInt64(Stretch / DType),
-                              N, PortNum, PP, DSA_Access, MO, MT, DType, 0);
+                              IB->getInt64(Stretch / DType), N, PortNum, PP,
+                              DSA_Access, MO, MT, DType, 0);
     return DMT_DMA;
   } else {
     llvm::errs() << Stream.Dimensions.size();
@@ -76,26 +79,20 @@ InjectLinearStream(IRBuilder<> *IB,
   llvm_unreachable("Unsupported stream dimension");
 }
 
-}
-}
+} // namespace inject
+} // namespace dsa
 
-const std::string &DFGFile::getName() {
-  return FileName;
-}
-
-
+const std::string &DFGFile::getName() { return FileName; }
 
 /// Check if a given SCEV is loop invariant
-bool CheckLoopInvariant(const SCEV *S, int From, const SmallVector<Loop*, 0> &LoopNest,
+bool CheckLoopInvariant(const SCEV *S, int From,
+                        const std::vector<Loop*> &LoopNest,
                         ScalarEvolution *SE) {
   for (size_t i = From; i < LoopNest.size(); ++i) {
     auto LI = LoopNest[i];
     if (!SE->isLoopInvariant(S, LI)) {
-      LLVM_DEBUG(
-        S->dump();
-        dbgs() << "Is NOT a loop invariant under ";
-        LI->dump()
-      );
+      LLVM_DEBUG(S->dump(); dbgs() << "Is NOT a loop invariant under ";
+                 LI->dump());
       return false;
     }
   }
@@ -104,7 +101,8 @@ bool CheckLoopInvariant(const SCEV *S, int From, const SmallVector<Loop*, 0> &Lo
 
 Value *DFGBase::ComputeRepeat(Value *Prime, Value *Wrapper, bool isVectorized,
                               bool isPortConfig) {
-  SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
+  SCEVExpander Expander(*Parent->Query->SE,
+                        Parent->Func.getParent()->getDataLayout(), "");
   auto &IB = *Parent->Query->IBPtr;
   if (IB.GetInsertPoint() != DefaultIP()->getIterator())
     IB.SetInsertPoint(DefaultIP());
@@ -131,8 +129,10 @@ Value *DFGBase::ComputeRepeat(Value *Prime, Value *Wrapper, bool isVectorized,
   }
 }
 
-Value *DFGBase::ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized, bool isPortConfig) {
-  SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
+Value *DFGBase::ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized,
+                              bool isPortConfig) {
+  SCEVExpander Expander(*Parent->Query->SE,
+                        Parent->Func.getParent()->getDataLayout(), "");
   if (!AR.Prime)
     return createConstant(getCtx(), 1);
   return ComputeRepeat(Expander.expandCodeFor(AR.Prime, nullptr, DefaultIP()),
@@ -140,7 +140,8 @@ Value *DFGBase::ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized, bool 
 }
 
 /// Chech if a SCEV can be a repeat stretch
-bool CanBeStretched(int x, const SmallVector<Loop*, 0> &LoopNest, ScalarEvolution *SE) {
+bool CanBeStretched(int x, const std::vector<Loop*> &LoopNest,
+                    ScalarEvolution *SE) {
   if (x != 1) {
     LLVM_DEBUG(dbgs() << "[Can be stretch] x != 1\n");
     return false;
@@ -158,11 +159,9 @@ bool CanBeStretched(int x, const SmallVector<Loop*, 0> &LoopNest, ScalarEvolutio
     for (size_t i = 2; i < LoopNest.size(); ++i) {
       auto LI = LoopNest[i];
       if (!SE->isLoopInvariant(S, LI)) {
-        LLVM_DEBUG(
-          S->dump();
-          dbgs() << "[Can be stretch] Is NOT a loop invariant under ";
-          LI->dump()
-        );
+        LLVM_DEBUG(S->dump();
+                   dbgs() << "[Can be stretch] Is NOT a loop invariant under ";
+                   LI->dump());
         return false;
       }
     }
@@ -174,7 +173,8 @@ bool CanBeStretched(int x, const SmallVector<Loop*, 0> &LoopNest, ScalarEvolutio
       return true;
     }
   }
-  LLVM_DEBUG(dbgs() << "[Can be stretch] invariant for the right outside loop!\n");
+  LLVM_DEBUG(
+      dbgs() << "[Can be stretch] invariant for the right outside loop!\n");
   return false;
 }
 
@@ -189,24 +189,19 @@ DFGEntry *DFGBase::InThisDFG(Value *Val) {
   return nullptr;
 }
 
-Instruction *DFGBase::DefaultIP() {
-  assert(false && "Not supported yet!");
-}
+Instruction *DFGBase::DefaultIP() { assert(false && "Not supported yet!"); }
 
-Instruction *TemporalDFG::DefaultIP() {
-  return IP;
-}
+Instruction *TemporalDFG::DefaultIP() { return IP; }
 
-Instruction *DedicatedDFG::DefaultIP() {
-  return &Preheader->back();
-}
+Instruction *DedicatedDFG::DefaultIP() { return &Preheader->back(); }
 
 bool DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
-  std::set<Value*> Visited{MP->UnderlyingInst()};
-  std::queue<Value*> Q;
+  std::set<Value *> Visited{MP->UnderlyingInst()};
+  std::queue<Value *> Q;
   Q.push(MP->UnderlyingInst());
   while (!Q.empty()) {
-    auto Cur = Q.front(); Q.pop();
+    auto Cur = Q.front();
+    Q.pop();
     for (auto User : Cur->users()) {
       if (auto DE = InThisDFG(User)) {
         if (isa<Accumulator>(DE)) {
@@ -224,44 +219,22 @@ bool DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
 
 int ScalarBits2T(int Bits) {
   switch (Bits) {
-    case 64: return 0;
-    case 32: return 1;
-    case 16: return 2;
-    case 8: return 3;
+  case 64:
+    return 0;
+  case 32:
+    return 1;
+  case 16:
+    return 2;
+  case 8:
+    return 3;
   }
   assert(false);
 }
 
-void DFGFile::InjectStreamIntrinsics() {
-  auto IB = Query->IBPtr;
-
-  for (auto &DFG : DFGs) {
-    for (auto Port : DFG->EntryFilter<InputPort>()) {
-      LLVM_DEBUG(dbgs() << "Inject for "; dbgs() << Port->dump());
-      Port->InjectStreamIntrinsic(IB);
-    }
-  }
-
-  for (auto &DFG : DFGs) {
-    for (auto Port : DFG->EntryFilter<OutputPort>()) {
-      LLVM_DEBUG(dbgs() << "Inject for "; dbgs() << Port->dump());
-      Port->InjectStreamIntrinsic(IB);
-    }
-  }
-
-  for (auto &DD : DFGs) {
-    for (auto &PB : DD->EntryFilter<PortBase>()) {
-      CHECK(PB->IntrinInjected);
-    }
-  }
-
-  IB->SetInsertPoint(Fence);
-  dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
-
-}
-
-Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Port) {
-  SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
+Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val,
+                                   int Port) {
+  SCEVExpander Expander(*Parent->Query->SE,
+                        Parent->Func.getParent()->getDataLayout(), "");
 
   if (!AR.Prime) {
     LLVM_DEBUG(dbgs() << "No repeat!\n");
@@ -281,9 +254,10 @@ Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
   } else if (AR.PT == AnalyzedRepeat::StretchedRepeat) {
     assert(AR.Prime->getSCEVType() == scAddRecExpr);
     auto SARE = dyn_cast<SCEVAddRecExpr>(AR.Prime);
-    auto BT =
-      Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()), nullptr, DefaultIP());
-    auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr, DefaultIP());
+    auto BT = Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()),
+                                     nullptr, DefaultIP());
+    auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr,
+                                     DefaultIP());
     assert(isa<ConstantInt>(SV));
     return InjectRepeat(IB->CreateAdd(BT, One), AR.Wrapped,
                         dyn_cast<ConstantInt>(SV)->getSExtValue(), Val, Port);
@@ -292,10 +266,12 @@ Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
     // Once we have a better hardware support to do this we no longer need this
     assert(AR.Prime->getSCEVType() == scAddRecExpr);
     auto SARE = dyn_cast<SCEVAddRecExpr>(AR.Prime);
-    auto First = IB->CreateAdd(Expander.expandCodeFor(SARE->getStart(), nullptr, DefaultIP()), One);
-    auto BT =
-      Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()), nullptr, DefaultIP());
-    auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr, DefaultIP());
+    auto First = IB->CreateAdd(
+        Expander.expandCodeFor(SARE->getStart(), nullptr, DefaultIP()), One);
+    auto BT = Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()),
+                                     nullptr, DefaultIP());
+    auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr,
+                                     DefaultIP());
     auto SVCI = dyn_cast<ConstantInt>(SV);
     CHECK(SVCI);
     auto SVInt = SVCI->getSExtValue();
@@ -303,29 +279,32 @@ Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
     auto Last = IB->CreateAdd(First, IB->CreateMul(BT, SV));
 
     switch (getUnroll()) {
-      case 1: {
-        // (First + Last) * (BT + 1) / 2
-        auto Prime = IB->CreateUDiv(IB->CreateMul(IB->CreateAdd(First, Last), IB->CreateAdd(BT, One)),
-                                    createConstant(getCtx(), 2));
-        return InjectRepeat(Prime, AR.Wrapped, /*I am not sure if put 0 here is correct*/0,
-                            Val, Port);
+    case 1: {
+      // (First + Last) * (BT + 1) / 2
+      auto Prime = IB->CreateUDiv(
+          IB->CreateMul(IB->CreateAdd(First, Last), IB->CreateAdd(BT, One)),
+          createConstant(getCtx(), 2));
+      return InjectRepeat(Prime, AR.Wrapped,
+                          /*I am not sure if put 0 here is correct*/ 0, Val,
+                          Port);
+    }
+    case 2: {
+      Value *Range;
+      if (SVInt == -1) {
+        // FIXME: Support last != 0 case later.
+        auto F2 = IB->CreateAdd(First, IB->getInt64(2));
+        auto FF =
+            IB->CreateUDiv(IB->CreateMul(F2, F2), createConstant(getCtx(), 4));
+        Range = FF;
+      } else {
+        assert(false && "Not supported yet...");
       }
-      case 2: {
-        Value *Range;
-        if (SVInt == -1) {
-          //FIXME: Support last != 0 case later.
-          auto F2 = IB->CreateAdd(First, IB->getInt64(2));
-          auto FF = IB->CreateUDiv(IB->CreateMul(F2, F2), createConstant(getCtx(), 4));
-          Range = FF;
-        } else {
-          assert(false && "Not supported yet...");
-        }
-        Range = IB->CreateShl(Range, 1);
-        return InjectRepeat(Range, AR.Wrapped, /*Same as above*/0, Val, Port);
-      }
-      default: {
-        llvm_unreachable("Not supported vectorization width");
-      }
+      Range = IB->CreateShl(Range, 1);
+      return InjectRepeat(Range, AR.Wrapped, /*Same as above*/ 0, Val, Port);
+    }
+    default: {
+      llvm_unreachable("Not supported vectorization width");
+    }
     }
     llvm_unreachable("Not supported yet...");
     return nullptr;
@@ -334,8 +313,8 @@ Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
   llvm_unreachable("Unknown kind of AnalyzedRepeat's Repeat Type");
 }
 
-Instruction *DFGBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch,
-                                   Value *Val, int Port) {
+Instruction *DFGBase::InjectRepeat(Value *Prime, Value *Wrapper,
+                                   int64_t Stretch, Value *Val, int Port) {
 
   auto IP = DefaultIP();
   auto &IB = *Parent->Query->IBPtr;
@@ -344,13 +323,14 @@ Instruction *DFGBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch
   auto ShiftedStretch = createConstant(getCtx(), Stretch << 3);
   auto VectorizedStretch = IB.CreateSDiv(ShiftedStretch, UnrollConstant());
   auto ActualStretch = IB.CreateShl(VectorizedStretch, 1);
-  (void) ActualStretch;
+  (void)ActualStretch;
 
-  dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr, Parent->Query->DSARegs);
+  dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr,
+                                       Parent->Query->DSARegs);
   if (Val == nullptr) {
     auto Repeat = IB.CreateAdd(
-      IB.CreateSDiv(IB.CreateSub(Prime, IB.getInt64(1)), UnrollConstant()),
-      IB.getInt64(1));
+        IB.CreateSDiv(IB.CreateSub(Prime, IB.getInt64(1)), UnrollConstant()),
+        IB.getInt64(1));
     DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
     if (Stretch) {
       DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, getUnroll());
@@ -363,7 +343,7 @@ Instruction *DFGBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch
     assert(Port != -1);
     DIE.SS_CONST(Port, Val,
                  /*Times=*/ComputeRepeat(Prime, Wrapper, true, false),
-                 /*Const Type*/Val->getType()->getScalarSizeInBits() / 8);
+                 /*Const Type*/ Val->getType()->getScalarSizeInBits() / 8);
     return DIE.res.back();
   }
 }
@@ -378,11 +358,11 @@ DFGBase *DFGBase::BelongOtherDFG(Instruction *I) {
   return nullptr;
 }
 
-std::pair<std::set<Instruction*>, std::set<Instruction*>>
+std::pair<std::set<Instruction *>, std::set<Instruction *>>
 BFSOperands(DFGBase *DFG, DominatorTree *DT, Instruction *From) {
 
-  std::set<Instruction*> Visited, OutBound;
-  std::queue<Instruction*> Q;
+  std::set<Instruction *> Visited, OutBound;
+  std::queue<Instruction *> Q;
 
   Visited.insert(From);
   Q.push(From);
@@ -410,11 +390,13 @@ BFSOperands(DFGBase *DFG, DominatorTree *DT, Instruction *From) {
   return {Visited, OutBound};
 }
 
-Predicate* DFGBase::FindEquivPredicate(Value *LHS, Value *RHS) {
+Predicate *DFGBase::FindEquivPredicate(Value *LHS, Value *RHS) {
   for (auto Elem : EntryFilter<Predicate>()) {
-    if (Elem->Cond[0]->getOperand(0) == LHS && Elem->Cond[0]->getOperand(1) == RHS)
+    if (Elem->Cond[0]->getOperand(0) == LHS &&
+        Elem->Cond[0]->getOperand(1) == RHS)
       return Elem;
-    if (Elem->Cond[0]->getOperand(1) == LHS && Elem->Cond[0]->getOperand(0) == RHS)
+    if (Elem->Cond[0]->getOperand(1) == LHS &&
+        Elem->Cond[0]->getOperand(0) == RHS)
       return Elem;
   }
   return nullptr;
@@ -428,23 +410,25 @@ bool DedicatedDFG::Contains(const Loop *L) {
   return false;
 }
 
-
 Value *DedicatedDFG::TripCount(int x, Instruction *InsertBefore) {
-  SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
+  SCEVExpander Expander(*Parent->Query->SE,
+                        Parent->Func.getParent()->getDataLayout(), "");
   auto IB = Parent->Query->IBPtr;
   auto BackSE = Parent->Query->SE->getBackedgeTakenCount(LoopNest[x]);
   assert(CheckLoopInvariant(BackSE, x + 1, LoopNest, Parent->Query->SE));
   auto BackTaken = Expander.expandCodeFor(BackSE, nullptr, InsertBefore);
   IB->SetInsertPoint(InsertBefore);
-  auto Trip = IB->CreateAdd(BackTaken, createConstant(getCtx(), 1), "trip.count");
+  auto Trip =
+      IB->CreateAdd(BackTaken, createConstant(getCtx(), 1), "trip.count");
   return Trip;
 }
 
 Value *DedicatedDFG::ProdTripCount(int l, int r, Instruction *InsertBefore) {
   Value *Prod = createConstant(getCtx(), 1);
   for (int i = l; i < r; ++i) {
-    Prod = BinaryOperator::Create(BinaryOperator::Mul, Prod, TripCount(i, InsertBefore),
-                                  "trip.prod", InsertBefore);
+    Prod = BinaryOperator::Create(BinaryOperator::Mul, Prod,
+                                  TripCount(i, InsertBefore), "trip.prod",
+                                  InsertBefore);
   }
   return Prod;
 }
@@ -454,7 +438,7 @@ Value *DedicatedDFG::ProdTripCount(int x, Instruction *InsertBefore) {
 }
 
 DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll)
-  : DFGBase(Parent_), UnrollFactor(std::max(1, Unroll)) {
+    : DFGBase(Parent_), UnrollFactor(std::max(1, Unroll)) {
 
   Kind = DFGBase::Dedicated;
 
@@ -473,11 +457,12 @@ DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll)
     LoopNest.push_back(Cur->getParentLoop());
   }
 
-  assert(GetUnrollMetadata(LoopNest.back()->getLoopID(), "llvm.loop.ss.stream") &&
-         "A stream level required!");
+  assert(
+      GetUnrollMetadata(LoopNest.back()->getLoopID(), "llvm.loop.ss.stream") &&
+      "A stream level required!");
 
   Loop *InnerLoop = nullptr;
-  std::set<BasicBlock*> Exclude;
+  std::set<BasicBlock *> Exclude;
 
   for (auto LI : LoopNest) {
     LLVM_DEBUG(dbgs() << "Loop: "; LI->dump());
@@ -496,20 +481,16 @@ DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll)
     InnerLoop = LI;
   }
 
-
-  LLVM_DEBUG(
-    dbgs() << "DFG" << (void*)(this) << ": ";
-    for (auto Block : Blocks) {
-      dbgs() << (void*) Block << ", ";
-    }
-  );
-
+  LLVM_DEBUG(dbgs() << "DFG" << (void *)(this) << ": ";
+             for (auto Block
+                  : Blocks) { dbgs() << (void *)Block << ", "; });
 
   LLVM_DEBUG(dbgs() << "Init blocks done\n");
 
   auto OuterMost = LoopNest.back();
   if (!(Preheader = OuterMost->getLoopPreheader())) {
-    Preheader = InsertPreheaderForLoop(OuterMost, Parent->Query->DT, Parent->Query->LI, nullptr, false);
+    Preheader = InsertPreheaderForLoop(OuterMost, Parent->Query->DT,
+                                       Parent->Query->LI, nullptr, false);
   }
 
   auto Prologue = FindLoopPrologue(LoopNest.back());
@@ -517,20 +498,20 @@ DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll)
   PrologueIP = &Prologue->back();
 }
 
-
 void DFGBase::dump(std::ostringstream &os) {}
 
 void DFGFile::addDFG(DFGBase *DB) {
-  assert(!AllInitialized && "You can no longer modify the dfg after scheduling");
+  assert(!AllInitialized &&
+         "You can no longer modify the dfg after scheduling");
   DFGs.push_back(DB);
 }
 
 void DFGFile::EraseOffloadedInstructions() {
 
-  std::set<Instruction*> Unique;
+  std::set<Instruction *> Unique;
 
   for (auto &DFG : DFGs) {
-    for (auto Entry: DFG->Entries) {
+    for (auto Entry : DFG->Entries) {
 
       // Skip instructions cannot be offloaded because of flags
       if (isa<IndMemPort>(Entry) && !dsa::utils::ModuleContext().IND) {
@@ -539,11 +520,12 @@ void DFGFile::EraseOffloadedInstructions() {
       if (isa<AtomicPortMem>(Entry) && !dsa::utils::ModuleContext().IND) {
         continue;
       }
-      if ((isa<CtrlMemPort>(Entry) || isa<Predicate>(Entry)) && !dsa::utils::ModuleContext().PRED) {
+      if ((isa<CtrlMemPort>(Entry) || isa<Predicate>(Entry)) &&
+          !dsa::utils::ModuleContext().PRED) {
         continue;
       }
 
-      auto F = [&Unique] (Instruction *Inst) {
+      auto F = [&Unique](Instruction *Inst) {
         bool SS = false;
         LLVM_DEBUG(Inst->dump());
         for (auto User : Inst->users()) {
@@ -579,10 +561,12 @@ void DFGFile::EraseOffloadedInstructions() {
     }
 
     if (auto DD = dyn_cast<DedicatedDFG>(DFG)) {
-      auto StreamMD = GetUnrollMetadata(DD->LoopNest.back()->getLoopID(), "llvm.loop.ss.stream");
+      auto StreamMD = GetUnrollMetadata(DD->LoopNest.back()->getLoopID(),
+                                        "llvm.loop.ss.stream");
       auto BarrierMD = dyn_cast<ConstantAsMetadata>(StreamMD->getOperand(1));
       if (BarrierMD->getValue()->getUniqueInteger().getSExtValue()) {
-        // Find the "break" finger, and inject the wait at the "break" finger block's end
+        // Find the "break" finger, and inject the wait at the "break" finger
+        // block's end
         auto OutBB = FindLoopPrologue(DD->LoopNest.back());
         Instruction *I = &OutBB->back();
         for (; !isa<PHINode>(I); I = I->getPrevNode()) {
@@ -622,31 +606,24 @@ void DFGFile::EraseOffloadedInstructions() {
   }
 
   LLVM_DEBUG(dbgs() << "Rip out all original instrucitons\n");
-
 }
 
-Loop *DedicatedDFG::InnerMost() {
-  return LoopNest.front();
-}
+Loop *DedicatedDFG::InnerMost() { return LoopNest.front(); }
 
-Loop *DedicatedDFG::OuterMost() {
-  return LoopNest.back();
-}
+Loop *DedicatedDFG::OuterMost() { return LoopNest.back(); }
 
-DFGBase::DFGBase(DFGFile *Parent_) :
-  Parent(Parent_) {
+DFGBase::DFGBase(DFGFile *Parent_) : Parent(Parent_) {
   ID = Parent_->DFGs.size();
   Kind = DFGBase::Unknown;
 }
 
-DFGBase::DFGKind DFGBase::getKind() const {
-  return Kind;
-}
+DFGBase::DFGKind DFGBase::getKind() const { return Kind; }
 
-TemporalDFG::TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End)
-  : DFGBase(Parent), Begin(Begin), End(End) {
+TemporalDFG::TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin,
+                         IntrinsicInst *End)
+    : DFGBase(Parent), Begin(Begin), End(End) {
 
-  std::set<Instruction*> users;
+  std::set<Instruction *> users;
   for (Instruction *I = Begin; I != End; I = I->getNextNode()) {
     for (auto Usr : I->users()) {
       if (auto Inst = dyn_cast<Instruction>(Usr)) {
@@ -677,7 +654,8 @@ void DedicatedDFG::dump(std::ostringstream &os) {
   if (!os.str().empty())
     os << "\n----\n\n";
   if (dsa::utils::ModuleContext().TRIGGER) {
-    CHECK(dsa::utils::ModuleContext().TEMPORAL) << "Trigger cannot be enabled without temporal";
+    CHECK(dsa::utils::ModuleContext().TEMPORAL)
+        << "Trigger cannot be enabled without temporal";
     os << "#pragma group temporal\n";
   }
   DFGBase::dump(os);
@@ -688,7 +666,8 @@ bool DedicatedDFG::Contains(Instruction *Inst) {
   // FIXME(@were): I forgot what this is doing.
 
   // if (Inst->getParent() == Parent->Config->getParent()) {
-  //   for (Instruction *I = Parent->Config, *E = &Parent->Config->getParent()->back();
+  //   for (Instruction *I = Parent->Config, *E =
+  //   &Parent->Config->getParent()->back();
   //        I != E; I = I->getNextNode()) {
   //     if (I == Inst)
   //       return true;
@@ -719,27 +698,22 @@ bool TemporalDFG::Contains(Instruction *Inst) {
   return false;
 }
 
-bool TemporalDFG::Contains(BasicBlock *BB) {
-  return BB == Begin->getParent();
-}
+bool TemporalDFG::Contains(BasicBlock *BB) { return BB == Begin->getParent(); }
 
-int TemporalDFG::getUnroll() {
-  return 1;
-}
+int TemporalDFG::getUnroll() { return 1; }
 
-int DedicatedDFG::getUnroll() {
-  return UnrollFactor;
-}
+int DedicatedDFG::getUnroll() { return UnrollFactor; }
 
 AnalyzedStream DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes) {
   return AnalyzeDataStream(Index, Bytes, false, nullptr);
 }
 
-AnalyzedStream
-DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
-                                Instruction *InsertBefore) {
+AnalyzedStream DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes,
+                                               bool DoOuterRepeat,
+                                               Instruction *InsertBefore) {
 
-  SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
+  SCEVExpander Expander(*Parent->Query->SE,
+                        Parent->Func.getParent()->getDataLayout(), "");
   auto IB = Parent->Query->IBPtr;
 
   if (InsertBefore == nullptr)
@@ -788,7 +762,8 @@ DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
   }
 
   auto EV = SE->getSCEV(Index);
-  LLVM_DEBUG(EV->dump(); dbgs() << "Index (" << EV->getSCEVType() << "): "; EV->dump());
+  LLVM_DEBUG(EV->dump(); dbgs() << "Index (" << EV->getSCEVType() << "): ";
+             EV->dump());
 
   if (i == LoopNest.size()) {
     LLVM_DEBUG(dbgs() << "Prime Repeat: "; Res.AR.Prime->dump();
@@ -803,7 +778,8 @@ DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
     return Res;
   }
 
-  assert(EV->getSCEVType() == scAddRecExpr && "The loop should starts with a polyhedral");
+  assert(EV->getSCEVType() == scAddRecExpr &&
+         "The loop should starts with a polyhedral");
 
   int RawSize = Bytes;
   Value *Cnt = createConstant(getCtx(), RawSize);
@@ -824,13 +800,13 @@ DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
 
     Value *Step = nullptr;
     if (Cur) {
-      assert(CheckLoopInvariant(Cur->getStepRecurrence(*SE), i + 2, LoopNest, SE));
-      Step = Expander.expandCodeFor(Cur->getStepRecurrence(*SE), nullptr, InsertBefore);
+      assert(
+          CheckLoopInvariant(Cur->getStepRecurrence(*SE), i + 2, LoopNest, SE));
+      Step = Expander.expandCodeFor(Cur->getStepRecurrence(*SE), nullptr,
+                                    InsertBefore);
       auto L = Cur->getLoop();
-      LLVM_DEBUG(
-        dbgs() << "Cur: "; Cur->getLoop()->dump();
-        dbgs() << "Nest:"; LoopNest[i]->dump();
-      );
+      LLVM_DEBUG(dbgs() << "Cur: "; Cur->getLoop()->dump(); dbgs() << "Nest:";
+                 LoopNest[i]->dump(););
       if (L != LoopNest[i]) {
         // FIXME: Later check required, but I think it is correct for now.
         assert(L->contains(LoopNest[i]));
@@ -862,14 +838,15 @@ DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
       }
       auto BackTaken_ = dyn_cast<SCEVAddRecExpr>(BackTaken);
       assert(BackTaken_);
-      auto Cnt = Expander.expandCodeFor(BackTaken_->getStart(), nullptr, InsertBefore);
+      auto Cnt =
+          Expander.expandCodeFor(BackTaken_->getStart(), nullptr, InsertBefore);
       assert(CheckLoopInvariant(BackTaken_->getStart(), i + 1, LoopNest, SE));
       IB->SetInsertPoint(InsertBefore);
       DimTripCount = IB->CreateAdd(Cnt, One, "trip.count");
       Value *NextStretch = nullptr;
       if (i + 1 < LoopNest.size() && BackTaken_->getLoop() == LoopNest[i + 1]) {
-        NextStretch = Expander.expandCodeFor(BackTaken_->getStepRecurrence(*SE), nullptr,
-                                             InsertBefore);
+        NextStretch = Expander.expandCodeFor(BackTaken_->getStepRecurrence(*SE),
+                                             nullptr, InsertBefore);
       } else {
         NextStretch = createConstant(getCtx(), 0);
       }
@@ -883,10 +860,12 @@ DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
     if (FirstExec) {
       bool Coalease = false;
       if (isa<Constant>(Cnt)) {
-        int64_t CntInt = dyn_cast<Constant>(Cnt)->getUniqueInteger().getSExtValue();
+        int64_t CntInt =
+            dyn_cast<Constant>(Cnt)->getUniqueInteger().getSExtValue();
         StretchInt *= CntInt;
         if (isa<Constant>(Step)) {
-          int64_t StepInt = dyn_cast<Constant>(Step)->getUniqueInteger().getSExtValue();
+          int64_t StepInt =
+              dyn_cast<Constant>(Step)->getUniqueInteger().getSExtValue();
           if (CntInt == StepInt) {
             IB->SetInsertPoint(InsertBefore);
             Cnt = IB->CreateMul(Step, DimTripCount);
@@ -904,30 +883,27 @@ DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
 
     Res.Dimensions.emplace_back(Step, DimTripCount, Stretch);
 
-    LLVM_DEBUG(
-      dbgs() << "Injected: "; InsertBefore->dump();
-      dbgs() << "Current: "; Step->dump();
-      dbgs() << "Stretch: " << Stretch;
-      dbgs() << "\n"
-    );
+    LLVM_DEBUG(dbgs() << "Injected: "; InsertBefore->dump();
+               dbgs() << "Current: "; Step->dump();
+               dbgs() << "Stretch: " << Stretch; dbgs() << "\n");
 
     Stretch = StretchInt;
   }
 
-  LLVM_DEBUG(
-    dbgs() << "After exiting: ";
-    EV->dump()
-  );
+  LLVM_DEBUG(dbgs() << "After exiting: "; EV->dump());
 
-  Value* Start = nullptr;
+  Value *Start = nullptr;
 
   Start = Expander.expandCodeFor(EV, nullptr, &Preheader->back());
   if (auto SARE = dyn_cast<SCEVAddRecExpr>(EV)) {
-    if (SARE->getLoop() != LoopNest.back() && SARE->getLoop()->contains(LoopNest.back())) {
-      Start = Expander.expandCodeFor(SARE->getStart(), nullptr, &Preheader->back());
+    if (SARE->getLoop() != LoopNest.back() &&
+        SARE->getLoop()->contains(LoopNest.back())) {
+      Start =
+          Expander.expandCodeFor(SARE->getStart(), nullptr, &Preheader->back());
       auto IndVar = SARE->getLoop()->getCanonicalInductionVariable();
       assert(IndVar);
-      auto Stride = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr, InsertBefore);
+      auto Stride = Expander.expandCodeFor(SARE->getStepRecurrence(*SE),
+                                           nullptr, InsertBefore);
       IB->SetInsertPoint(InsertBefore);
       auto Delta = IB->CreateMul(IndVar, Stride);
       auto Casted = IB->CreatePtrToInt(Start, Delta->getType());
@@ -952,32 +928,26 @@ Value *AnalyzedStream::BytesFromMemory(IRBuilder<> *IB) {
   return Res;
 }
 
-
 Value *DFGBase::UnrollConstant() {
   return Parent->Query->IBPtr->getInt64(getUnroll());
 }
 
+LLVMContext &DFGBase::getCtx() { return Parent->getCtx(); }
 
-LLVMContext &DFGBase::getCtx() {
-  return Parent->getCtx();
-}
+LLVMContext &DFGFile::getCtx() { return Query->IBPtr->getContext(); }
 
-
-LLVMContext &DFGFile::getCtx() {
-  return Query->IBPtr->getContext();
-}
-
-template<typename DFGType>
-void AddDFG(DFGFile *DF, MDNode *Ptr, Loop *LI) {
+template <typename DFGType> void AddDFG(DFGFile *DF, MDNode *Ptr, Loop *LI) {
   assert(Ptr->getNumOperands() == 2);
   auto MDFactor = dyn_cast<ConstantAsMetadata>(Ptr->getOperand(1));
   assert(MDFactor);
-  int Factor =(int) MDFactor->getValue()->getUniqueInteger().getSExtValue();
+  int Factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
   DF->addDFG(new DFGType(DF, LI, Factor));
 }
 
-DFGFile::DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query_)
-  : FileName(Name), Func(*Start->getParent()->getParent()), Config(Start), Fence(End), Query(Query_) {}
+DFGFile::DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End,
+                 StreamSpecialize *Query_)
+    : FileName(Name), Func(*Start->getParent()->getParent()), Config(Start),
+      Fence(End), Query(Query_) {}
 
 int getPortImpl() {
   static const int Ports[] = {23, 24, 25, 26, 27, 28, 29, 30, 31};
@@ -990,32 +960,32 @@ int getPortImpl() {
 
 int DFGBase::getNextIND() {
   return getPortImpl();
-  //static const int Ports[] = {27, 28, 29, 30, 31};
-  //static const int N = (sizeof Ports) / (sizeof(int));
-  //static int Cur = 0;
-  //int Res = Ports[Cur];
-  //Cur = (Cur + 1) % N;
-  //return Res;
+  // static const int Ports[] = {27, 28, 29, 30, 31};
+  // static const int N = (sizeof Ports) / (sizeof(int));
+  // static int Cur = 0;
+  // int Res = Ports[Cur];
+  // Cur = (Cur + 1) % N;
+  // return Res;
 }
 
 int DFGBase::getNextReserved() {
   return getPortImpl();
-  //static const int Ports[] = {23, 24, 25, 26};
-  //static const int N = (sizeof Ports) / (sizeof(int));
-  //static int Cur = 0;
-  //int Res = Ports[Cur];
-  //Cur = (Cur + 1) % N;
-  //return Res;
+  // static const int Ports[] = {23, 24, 25, 26};
+  // static const int N = (sizeof Ports) / (sizeof(int));
+  // static int Cur = 0;
+  // int Res = Ports[Cur];
+  // Cur = (Cur + 1) % N;
+  // return Res;
 }
 
-SmallVector<BasicBlock*, 0> DedicatedDFG::getBlocks() {
-  SmallVector<BasicBlock*, 0> Res(InnerMost()->getBlocks().begin(),
-                                  InnerMost()->getBlocks().end());
+SmallVector<BasicBlock *, 0> DedicatedDFG::getBlocks() {
+  SmallVector<BasicBlock *, 0> Res(InnerMost()->getBlocks().begin(),
+                                   InnerMost()->getBlocks().end());
   return Res;
 }
 
-SmallVector<BasicBlock*, 0> TemporalDFG::getBlocks() {
-  SmallVector<BasicBlock*, 0> Res{Begin->getParent()};
+SmallVector<BasicBlock *, 0> TemporalDFG::getBlocks() {
+  SmallVector<BasicBlock *, 0> Res{Begin->getParent()};
   return Res;
 }
 
@@ -1086,7 +1056,7 @@ void DFGFile::InspectSPADs() {
   auto GEP = IBPtr->CreateGEP(SpadPtr, IBPtr->getInt64(0));
   IBPtr->CreateStore(IBPtr->getInt64(0), GEP);
 
-  std::vector<Instruction*> ToInject;
+  std::vector<Instruction *> ToInject;
   auto DT = Query->DT;
 
   for (auto &BB : Func) {
@@ -1094,8 +1064,9 @@ void DFGFile::InspectSPADs() {
       continue;
     if (&BB != Config->getParent() && !DT->dominates(Config, &BB))
       continue;
-    auto range = make_range(&BB != Config->getParent() ? BB.begin() : Config->getIterator(),
-                            &BB != Fence->getParent() ? BB.end() : Fence->getIterator());
+    auto range = make_range(
+        &BB != Config->getParent() ? BB.begin() : Config->getIterator(),
+        &BB != Fence->getParent() ? BB.end() : Fence->getIterator());
     for (auto &Inst : range) {
       if (isa<ReturnInst>(Inst)) {
         ToInject.push_back(&Inst);
@@ -1111,9 +1082,7 @@ void DFGFile::InspectSPADs() {
           Intrin->getIntrinsicID() == Intrinsic::lifetime_end) {
         ToInject.push_back(&Inst);
       }
-
     }
-
   }
 
   for (auto Inst : ToInject) {
@@ -1126,8 +1095,8 @@ void DFGFile::InspectSPADs() {
       auto f = [this, GEP, IBPtr](IntrinsicInst *Intrin) {
         assert(Intrin->getNumOperands() == 3);
         auto Size = Intrin->getOperand(0);
-        // Calling an LLVM function will put this function as the last argument of the
-        // CallSite.
+        // Calling an LLVM function will put this function as the last argument
+        // of the CallSite.
         auto CI = dyn_cast<CastInst>(Intrin->getOperand(1));
         assert(CI);
         auto AI = dyn_cast<AllocaInst>(CI->getOperand(0));
@@ -1152,7 +1121,6 @@ void DFGFile::InspectSPADs() {
       f(Intrin);
     }
   }
-
 }
 
 void DFGBase::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }

@@ -1,20 +1,20 @@
 #pragma once
 
+#include "DFGEntry.h"
+#include "Pass.h"
+#include "StreamAnalysis.h"
+#include "Util.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 #include <map>
 #include <memory>
 #include <set>
 #include <vector>
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
-#include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Instruction.h"
-#include "llvm/Support/Casting.h"
-#include "Util.h"
-#include "DFGEntry.h"
-#include "Pass.h"
-#include "StreamAnalysis.h"
 
 #include "dsa/rf.h"
 #include "dsa/spec.h"
@@ -29,21 +29,21 @@ class DFGBase;
 struct AnalyzedRepeat {
 
   enum PrimeType {
-    PlainRepeat, // Simple repeat wrapped by fixed trip count loops
-    StretchedRepeat, // 2-nested loop, the inner one is affected by the outer one
+    PlainRepeat,     // Simple repeat wrapped by fixed trip count loops
+    StretchedRepeat, // 2-nested loop, the inner one is affected by the outer
+                     // one
     SumOfStretchedRepeat // 2-nested loop, but count the sum of the trip counts
   };
 
   PrimeType PT{PlainRepeat};
   const SCEV *Prime{nullptr};
   Value *Wrapped{nullptr};
-
 };
 
 struct AnalyzedStream {
   AnalyzedRepeat AR;
   Value *OuterRepeat{nullptr};
-  std::vector<std::tuple<Value*, Value*, int>> Dimensions;
+  std::vector<std::tuple<Value *, Value *, int>> Dimensions;
   Value *BytesFromMemory(IRBuilder<> *IB);
 };
 
@@ -58,33 +58,27 @@ struct DFGVisitor {
   virtual void Visit(TemporalDFG *);
 };
 
-}
-
+} // namespace dsa
 
 /// The class of the base dfg
 class DFGBase {
 public:
-  enum DFGKind {
-    Unknown,
-    Dedicated,
-    Temporal,
-    DataMove
-  };
+  enum DFGKind { Unknown, Dedicated, Temporal, DataMove };
 
   /// DFG #ID in the .dfg file.
   int ID{-1};
   /// The DFGFile contains this DFG
   DFGFile *Parent;
   /// The instructions to be emitted as DFG
-  SmallVector<DFGEntry*, 0> Entries;
+  std::vector<DFGEntry*> Entries;
   /// Find a value among the compute bodies
   std::string ValueToOperandText(Value *Val, int Vec = -1);
   /// To unify the comparisons
-  std::map<std::pair<Value*, Value*>, Predicate*> Comparison;
+  std::map<std::pair<Value *, Value *>, Predicate *> Comparison;
 
   DFGKind Kind;
 
-  std::vector<Instruction*> InjectedCode;
+  std::vector<Instruction *> InjectedCode;
 
   DFGBase(DFGFile *);
 
@@ -106,7 +100,7 @@ public:
   /// Get the current context
   virtual LLVMContext &getCtx();
   /// The blocks to be offloaded to the dataflow
-  virtual SmallVector<BasicBlock*, 0> getBlocks() = 0;
+  virtual SmallVector<BasicBlock *, 0> getBlocks() = 0;
   /// Dump the dfg to an I/O stream
   virtual void dump(std::ostringstream &os);
   /// Check if this given instruction/Block is in the DFG
@@ -122,7 +116,6 @@ public:
    */
   virtual void Accept(dsa::DFGVisitor *);
 
-
   /// TODO(@were): Decouple and remove all these.
   // {
   /// Check if this block belong to the DFGs
@@ -130,9 +123,9 @@ public:
   /// Check if a value is in this DFG
   DFGEntry *InThisDFG(Value *Val);
   /// The default position to inject the instructions
-  virtual Instruction* DefaultIP();
+  virtual Instruction *DefaultIP();
   /// Find the predicate that can be merged into one.
-  Predicate* FindEquivPredicate(Value *LHS, Value *RHS);
+  Predicate *FindEquivPredicate(Value *LHS, Value *RHS);
 
   /// The helper function to calculate the actual repeat time.
   /// Refer injection doc's example for more details.
@@ -141,7 +134,8 @@ public:
   // (since last 3 bits are for fixed point thing)
   Value *ComputeRepeat(Value *Prime, Value *Wrapper, bool isVectorized,
                        bool isPortConfig);
-  Value *ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized, bool isPortConfig);
+  Value *ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized,
+                       bool isPortConfig);
 
   /// Inject port repeat
   Instruction *InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Port);
@@ -153,7 +147,8 @@ public:
   /// Then we should do ceil_div(3, 2) * 10 = 20, instead of 3 * 10 / 2 = 15.
   /// The Prime indicates the "3" here.
   /// The Wrap indicates the "10" here.
-  Instruction *InjectRepeat(Value *Prime, Value *Wrap, int64_t Stretch, Value *Val, int Port);
+  Instruction *InjectRepeat(Value *Prime, Value *Wrap, int64_t Stretch,
+                            Value *Val, int Port);
 
   DFGKind getKind() const;
 
@@ -166,17 +161,15 @@ public:
   /// Get the indirect port number.
   int getNextIND();
   /// Get the next reserved port number for random use.
-  /// FIXME: I am not sure if it is good. Do we need a systematic way to manage all the port?
+  /// FIXME: I am not sure if it is good. Do we need a systematic way to manage
+  /// all the port?
   int getNextReserved();
   /// The scope of the DFG to be offload
   virtual bool InThisScope(Instruction *) = 0;
 
-  static bool classof(DFGBase *DB) {
-    return true;
-  }
+  static bool classof(DFGBase *DB) { return true; }
 
-  template<typename T>
-  std::vector<T*> EntryFilter() {
+  template <typename T> std::vector<T *> EntryFilter() {
     return TypeFilter<T>(Entries);
   }
 };
@@ -189,7 +182,7 @@ class DFGFile {
   Instruction *Config, *Fence;
   StreamSpecialize *Query;
   /// DFGs included by this DFGFile
-  std::vector<DFGBase*> DFGs;
+  std::vector<DFGBase *> DFGs;
   std::map<Value *, Value *> AddrsOnSpad;
 
   bool AllInitialized{false};
@@ -213,7 +206,8 @@ public:
   friend struct AtomicPortMem;
 
   /// The constructor
-  DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query);
+  DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End,
+          StreamSpecialize *Query);
 
   /*!
    * \brief Get the name of the DFG.
@@ -222,8 +216,6 @@ public:
 
   /// Add the given DFG to this file
   void addDFG(DFGBase *DFG);
-  /// Analyze the data streams
-  void InjectStreamIntrinsics();
   /// Erase all the instructions offloaded to CGRA
   void EraseOffloadedInstructions();
   /// Get the current context
@@ -231,16 +223,13 @@ public:
   /// Allocate addresses on the scratch pad
   void InspectSPADs();
 
-  template<typename T>
-  std::vector<T*> DFGFilter() {
+  template <typename T> std::vector<T *> DFGFilter() {
     return TypeFilter<T>(DFGs);
   }
-
 };
 
 /// The class of the temporal DFG
 class TemporalDFG : public DFGBase {
-
 
 public:
   IntrinsicInst *Begin, *End;
@@ -254,7 +243,7 @@ public:
   TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
 
   /// Return the blocks of the DFG
-  SmallVector<BasicBlock*, 0> getBlocks() override;
+  SmallVector<BasicBlock *, 0> getBlocks() override;
   /// Dump the DFG to text format
   void dump(std::ostringstream &os) override;
   /// Check if this given instruction is in the DFG
@@ -263,7 +252,7 @@ public:
   /// Get the unroll factor of the DFG
   int getUnroll() override;
   /// The default position to inject instructions
-  Instruction* DefaultIP() override;
+  Instruction *DefaultIP() override;
   /// Analyze data stream
   AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes) override;
   /// The scope of the DFG to be offload
@@ -273,9 +262,7 @@ public:
    */
   virtual void Accept(dsa::DFGVisitor *) override;
 
-  static bool classof(const DFGBase *DB) {
-    return DB->getKind() == Temporal;
-  }
+  static bool classof(const DFGBase *DB) { return DB->getKind() == Temporal; }
 };
 
 /// The class of the dedicated DFG
@@ -296,11 +283,11 @@ class DedicatedDFG : public DFGBase {
 
 public:
   /// The loop levels from dfg to stream pragma
-  SmallVector<Loop*, 0> LoopNest;
+  std::vector<Loop*> LoopNest;
   /// How many times the instances should be duplicated
   int UnrollFactor;
   /// Blocks in this path of loop nest
-  std::set<BasicBlock*> Blocks;
+  std::set<BasicBlock *> Blocks;
   /// The insert point of the instructions
   BasicBlock *Preheader;
   /// Prologue IP
@@ -322,25 +309,26 @@ public:
   /// The trip count of each loop level
   Value *TripCount(int x, Instruction *InsertBefore);
   /// The trip count product of inner loop levels
-  /// If the bool is true, the inner most loop should be ceil divided by the unroll factor
+  /// If the bool is true, the inner most loop should be ceil divided by the
+  /// unroll factor
   Value *ProdTripCount(int l, int r, Instruction *InsertBefore);
   Value *ProdTripCount(int x, Instruction *InsertBefore);
 
   /// Analyze data stream
   AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes) override;
-  AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes, bool DoOuterRepeat,
+  AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes,
+                                   bool DoOuterRepeat,
                                    Instruction *InsertBefore);
-
 
   DedicatedDFG(DFGFile *, Loop *, int);
 
   /// Inputs of this DFG
   virtual void dump(std::ostringstream &os) override;
   /// Return the blocks of the DFG
-  SmallVector<BasicBlock*, 0> getBlocks() override;
+  SmallVector<BasicBlock *, 0> getBlocks() override;
   /// Inner/outer-most loop level
-  Loop* OuterMost();
-  Loop* InnerMost();
+  Loop *OuterMost();
+  Loop *InnerMost();
   /// Check if this given stuff is in the DFG
   bool Contains(Instruction *) override;
   bool Contains(BasicBlock *) override;
@@ -348,7 +336,7 @@ public:
   /// Get the unroll factor of the DFG
   int getUnroll() override;
   /// The default position to inject instructions
-  Instruction* DefaultIP() override;
+  Instruction *DefaultIP() override;
   /// The scope of the DFG to be offload
   bool InThisScope(Instruction *I) override;
   /*!
@@ -357,11 +345,9 @@ public:
   virtual void Accept(dsa::DFGVisitor *) override;
 
   static bool classof(const DFGBase *DB) {
-    return DB->getKind() == Dedicated ||
-           DB->getKind() == DataMove;
+    return DB->getKind() == Dedicated || DB->getKind() == DataMove;
   }
 };
-
 
 namespace dsa {
 namespace inject {
@@ -376,50 +362,40 @@ namespace inject {
  * \param MT The memory type DMA or SPAD.
  * \param DType The data type of each element in the injected stream.
  */
-MemoryType
-InjectLinearStream(IRBuilder<> *IB,
-                   const RegisterFile &Regs,
-                   int PortNum, const AnalyzedStream &Stream,
-                   MemoryOperation MO, Padding PP, MemoryType MT, int DType);
+MemoryType InjectLinearStream(IRBuilder<> *IB, const RegisterFile &Regs,
+                              int PortNum, const AnalyzedStream &Stream,
+                              MemoryOperation MO, Padding PP, MemoryType MT,
+                              int DType);
 
 struct DSAIntrinsicEmitter {
   bool Prepass{true};
   IRBuilder<> *IB;
-  std::vector<CallInst*> res;
+  std::vector<CallInst *> res;
   RegisterFile Regs;
 
   struct REG {
-    static std::stack<IRBuilder<>*> IBStack;
+    static std::stack<IRBuilder<> *> IBStack;
     Value *value{nullptr};
     REG() {}
     REG(Value *value_) : value(value_) {}
-    REG(uint64_t x) {
-      value = IBStack.top()->getInt64(x);
-    }
-    operator Value*&() { return value; }
+    REG(uint64_t x) { value = IBStack.top()->getInt64(x); }
+    operator Value *&() { return value; }
   };
 
-  DSAIntrinsicEmitter(IRBuilder<> *IB_,
-                      const RegisterFile &Regs_) : IB(IB_), Regs(Regs_) {
+  DSAIntrinsicEmitter(IRBuilder<> *IB_, const RegisterFile &Regs_)
+      : IB(IB_), Regs(Regs_) {
     REG::IBStack.push(IB_);
   }
 
-  ~DSAIntrinsicEmitter() {
-    REG::IBStack.pop();
-  }
+  ~DSAIntrinsicEmitter() { REG::IBStack.pop(); }
 
-  REG DIV(REG a, REG b) {
-    return IB->CreateUDiv(a, b);
-  }
+  REG DIV(REG a, REG b) { return IB->CreateUDiv(a, b); }
 
-  REG SUB(REG a, REG b) {
-    return IB->CreateSub(a, b);
-  }
+  REG SUB(REG a, REG b) { return IB->CreateSub(a, b); }
 
   void IntrinsicImpl(const std::string &Mnemonic,
                      const std::string &OpConstrain,
-                     const std::vector<Value*> &Args,
-                     Type *ResTy) {
+                     const std::vector<Value *> &Args, Type *ResTy) {
     std::ostringstream MOSS;
     MOSS << Mnemonic << " $0";
     for (int i = 0, n = OpConstrain.size(), j = 1; i < n; ++i) {
@@ -428,19 +404,18 @@ struct DSAIntrinsicEmitter {
         ++j;
       }
     }
-    std::vector<Type*> Types;
+    std::vector<Type *> Types;
     for (auto Arg : Args) {
       Types.push_back(Arg->getType());
     }
     auto FTy = FunctionType::get(ResTy, Types, false);
     auto IA = InlineAsm::get(FTy, MOSS.str(), OpConstrain, true);
     res.push_back(IB->CreateCall(IA, Args));
-    if (Mnemonic == "ss_lin_strm" ||
-        Mnemonic == "ss_ind_strm" ||
-        Mnemonic == "ss_recv" ||
-        Mnemonic == "ss_wr_rd") {
+    if (Mnemonic == "ss_lin_strm" || Mnemonic == "ss_ind_strm" ||
+        Mnemonic == "ss_recv" || Mnemonic == "ss_wr_rd") {
       for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
-        auto C = IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
+        auto C =
+            IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
         auto SV = IB->CreateLoad(Regs[i].Reg);
         auto Reset = IB->CreateSelect(C, SV, IB->getInt64(REG_STICKY[i]));
         IB->CreateStore(Reset, Regs[i].Reg);
@@ -449,7 +424,8 @@ struct DSAIntrinsicEmitter {
   }
 
   void INTRINSIC_DRI(std::string Mnemonic, REG &a, REG b, int c) {
-    IntrinsicImpl(Mnemonic, "=r,r,i", {b.value, IB->getInt64(c)}, IB->getInt64Ty());
+    IntrinsicImpl(Mnemonic, "=r,r,i", {b.value, IB->getInt64(c)},
+                  IB->getInt64Ty());
     a.value = res.back();
   }
 
@@ -479,8 +455,11 @@ struct DSAIntrinsicEmitter {
         IB->CreateStore(AV, Regs[idx1].Reg);
         IB->CreateStore(IB->getInt8(s1), Regs[idx1].Sticky);
         if (getenv("FUSION")) {
-          IntrinsicImpl("equal.hint.v1", "r", {IB->CreateICmpEQ(AA, AV)}, IB->getVoidTy());
-          IntrinsicImpl("equal.hint.s1", "r", {IB->CreateICmpEQ(AS, IB->getInt8(s1))}, IB->getVoidTy());
+          IntrinsicImpl("equal.hint.v1", "r", {IB->CreateICmpEQ(AA, AV)},
+                        IB->getVoidTy());
+          IntrinsicImpl("equal.hint.s1", "r",
+                        {IB->CreateICmpEQ(AS, IB->getInt8(s1))},
+                        IB->getVoidTy());
         }
       }
       Value *IV2 = IB->getInt64(idx2);
@@ -491,19 +470,24 @@ struct DSAIntrinsicEmitter {
         IB->CreateStore(BV, Regs[idx2].Reg);
         IB->CreateStore(IB->getInt8(s2), Regs[idx2].Sticky);
         if (getenv("FUSION")) {
-          IntrinsicImpl("equal.hint.v2", "r", {IB->CreateICmpEQ(BB, BV)}, IB->getVoidTy());
-          IntrinsicImpl("equal.hint.s2", "r", {IB->CreateICmpEQ(BS, IB->getInt8(s2))}, IB->getVoidTy());
+          IntrinsicImpl("equal.hint.v2", "r", {IB->CreateICmpEQ(BB, BV)},
+                        IB->getVoidTy());
+          IntrinsicImpl("equal.hint.s2", "r",
+                        {IB->CreateICmpEQ(BS, IB->getInt8(s2))},
+                        IB->getVoidTy());
         }
       }
       auto A = IB->CreateLoad(Regs[idx1].Reg);
       auto B = IB->CreateLoad(Regs[idx2].Reg);
       auto S1 = IB->getInt64(s1 << 10);
       auto S2 = s2 ? IB->getInt64(~((1 << 11) - 1)) : IB->getInt64(0);
-      auto Imm = IB->CreateOr(IB->CreateOr(IB->CreateOr(IV1, IB->CreateShl(IV2, 5)), S1), S2);
+      auto Imm = IB->CreateOr(
+          IB->CreateOr(IB->CreateOr(IV1, IB->CreateShl(IV2, 5)), S1), S2);
       IntrinsicImpl(Mnemonic, "r,r,i", {A, B, Imm}, IB->getVoidTy());
       return;
     }
-    IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)}, IB->getVoidTy());
+    IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)},
+                  IB->getVoidTy());
   }
 
   void INTRINSIC_RI(std::string Mnemonic, REG a, int b) {
@@ -515,7 +499,6 @@ struct DSAIntrinsicEmitter {
   }
 
 #include "intrin_impl.h"
-
 };
 
 struct AffinedInjector {
@@ -523,15 +506,18 @@ struct AffinedInjector {
   SCEVExpander *SEE;
   DSAIntrinsicEmitter DIE;
   AffinedInjector(IRBuilder<> *IB_, SCEVExpander *SEE_,
-                  const std::vector<dsa::utils::StickyRegister> &Regs) : IB(IB_), SEE(SEE_), DIE(IB_, Regs) {}
+                  const std::vector<dsa::utils::StickyRegister> &Regs)
+      : IB(IB_), SEE(SEE_), DIE(IB_, Regs) {}
 };
 
 struct RepeatInjector : AffinedInjector {
-  RepeatInjector(
-    IRBuilder<> *IB, SCEVExpander *SEE,
-    const std::vector<dsa::utils::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
+  RepeatInjector(IRBuilder<> *IB, SCEVExpander *SEE,
+                 const std::vector<dsa::utils::StickyRegister> &Regs)
+      : AffinedInjector(IB, SEE, Regs) {}
 
-  void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops, int Port, int Unroll) {
+  void Inject(analysis::LinearInfo *LI,
+              const std::vector<analysis::LinearInfo *> &Loops, int Port,
+              int Unroll) {
     CHECK(Loops.size() == LI->Coef.size() || LI->Coef.empty());
     Value *Repeat = IB->getInt64(1);
     int N = LI->Coef.empty() ? Loops.size() : LI->PatialInvariant();
@@ -539,7 +525,8 @@ struct RepeatInjector : AffinedInjector {
       auto Coef = LI->Coef[i]->ConstInt();
       CHECK(Coef && *Coef == 0);
       if (!Loops[i]->Coef.empty()) {
-        CHECK(i == 0) << "Only the inner most dimension supports repeat stretch.";
+        CHECK(i == 0)
+            << "Only the inner most dimension supports repeat stretch.";
         for (int j = 0; j < N; ++j) {
           if (j == 1) {
             continue;
@@ -548,9 +535,11 @@ struct RepeatInjector : AffinedInjector {
           CHECK(CI && *CI == 0);
         }
         DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, Unroll);
-        DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, SEE->expandCodeFor(LI->Coef[i]->Coef[1]->Base));
+        DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch,
+                           SEE->expandCodeFor(LI->Coef[i]->Coef[1]->Base));
       }
-      auto Current = IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Base), IB->getInt64(1));
+      auto Current =
+          IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Base), IB->getInt64(1));
       if (i == 0 && Unroll != 1) {
         Current = IB->CreateSub(Current, IB->getInt64(1));
         Current = IB->CreateSDiv(Current, IB->getInt64(Unroll));
@@ -564,68 +553,73 @@ struct RepeatInjector : AffinedInjector {
 
 struct LinearInjector : AffinedInjector {
 
-  LinearInjector(
-    IRBuilder<> *IB, SCEVExpander *SEE,
-    const std::vector<dsa::utils::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
+  LinearInjector(IRBuilder<> *IB, SCEVExpander *SEE,
+                 const std::vector<dsa::utils::StickyRegister> &Regs)
+      : AffinedInjector(IB, SEE, Regs) {}
 
-  void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops,
-              int Port, MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
+  void Inject(analysis::LinearInfo *LI,
+              const std::vector<analysis::LinearInfo *> &Loops, int Port,
+              MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
     if (auto LII = LI->Invariant()) {
-      DIE.INSTANTIATE_1D_STREAM(
-        SEE->expandCodeFor(LII), IB->getInt64(0), IB->getInt64(1),
-        Port, PP, DSA_Access, MO, MT, DType, 0);
+      DIE.INSTANTIATE_1D_STREAM(SEE->expandCodeFor(LII), IB->getInt64(0),
+                                IB->getInt64(1), Port, PP, DSA_Access, MO, MT,
+                                DType, 0);
       return;
     }
-    CHECK(Loops.size() == LI->Coef.size()) << Loops.size() << " != " << LI->Coef.size();
+    CHECK(Loops.size() == LI->Coef.size())
+        << Loops.size() << " != " << LI->Coef.size();
     int Dim = Loops.size() - LI->PatialInvariant();
     CHECK(0 <= Dim && Dim <= 3) << Dim;
     auto Start = SEE->expandCodeFor(LI->Base);
     int i = LI->PatialInvariant();
     switch (Dim) {
-      case 0: {
-        DIE.INSTANTIATE_1D_STREAM(
-          Start, IB->getInt64(0), IB->getInt64(1),
-          Port, PP, DSA_Access, MO, MT, DType, 0);
-        break;
-      }
-      case 1: {
-        auto N = Loops[i]->Invariant();
-        CHECK(N) << "No stretch should be in 1d stream! " << Loops[i]->toString();
-        auto Stride = LI->Coef[i]->Invariant();
-        CHECK(Stride) << "Stride should not be stretched!";
-        DIE.INSTANTIATE_1D_STREAM(
+    case 0: {
+      DIE.INSTANTIATE_1D_STREAM(Start, IB->getInt64(0), IB->getInt64(1), Port,
+                                PP, DSA_Access, MO, MT, DType, 0);
+      break;
+    }
+    case 1: {
+      auto N = Loops[i]->Invariant();
+      CHECK(N) << "No stretch should be in 1d stream! " << Loops[i]->toString();
+      auto Stride = LI->Coef[i]->Invariant();
+      CHECK(Stride) << "Stride should not be stretched!";
+      DIE.INSTANTIATE_1D_STREAM(
           Start, SEE->expandCodeFor(LI->Coef[i]->Invariant()),
-          IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1)),
+          IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Invariant()),
+                        IB->getInt64(1)),
           Port, PP, DSA_Access, MO, MT, DType, 0);
-        break;
-      }
-      case 2: {
-        // TODO(@were): Make assumption check!
-        auto Length1D =
+      break;
+    }
+    case 2: {
+      // TODO(@were): Make assumption check!
+      auto Length1D =
           IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Base), IB->getInt64(1));
-        Value* Stretch = IB->getInt64(0);
-        if (!Loops[i]->Coef.empty()) {
-          Stretch = IB->CreateSDiv(SEE->expandCodeFor(Loops[i]->Coef[i + 1]->Base), IB->getInt64(DType));
-        }
-        auto Length2D =
-          IB->CreateAdd(SEE->expandCodeFor(Loops[i + 1]->Base), IB->getInt64(1));
-        auto Stride1D =
-          SEE->expandCodeFor(LI->Coef[i]->Invariant());
-        auto Stride2D =
-          IB->CreateSDiv(SEE->expandCodeFor(LI->Coef[i + 1]->Invariant()), IB->getInt64(DType));
-        DIE.INSTANTIATE_2D_STREAM(Start, Stride1D, Length1D, Stride2D, Stretch, Length2D,
-                                  Port, PP, DSA_Access, MO, MT, DType, 0);
-        break;
+      Value *Stretch = IB->getInt64(0);
+      if (!Loops[i]->Coef.empty()) {
+        Stretch =
+            IB->CreateSDiv(SEE->expandCodeFor(Loops[i]->Coef[i + 1]->Base),
+                           IB->getInt64(DType));
       }
-      case 3: {
-        CHECK(false) << "Unsupported dimension: " << Dim;
-        break;
-      }
-      default:
-        CHECK(false) << "Unsupported dimension: " << Dim;
+      auto Length2D = IB->CreateAdd(SEE->expandCodeFor(Loops[i + 1]->Base),
+                                    IB->getInt64(1));
+      auto Stride1D = SEE->expandCodeFor(LI->Coef[i]->Invariant());
+      auto Stride2D =
+          IB->CreateSDiv(SEE->expandCodeFor(LI->Coef[i + 1]->Invariant()),
+                         IB->getInt64(DType));
+      DIE.INSTANTIATE_2D_STREAM(Start, Stride1D, Length1D, Stride2D, Stretch,
+                                Length2D, Port, PP, DSA_Access, MO, MT, DType,
+                                0);
+      break;
+    }
+    case 3: {
+      CHECK(false) << "Unsupported dimension: " << Dim;
+      break;
+    }
+    default:
+      CHECK(false) << "Unsupported dimension: " << Dim;
     }
   }
 };
 
-}
-}
+} // namespace inject
+} // namespace dsa

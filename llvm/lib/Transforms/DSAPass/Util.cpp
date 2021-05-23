@@ -1,20 +1,22 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Type.h"
-#include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
-#include "Util.h"
 
-#include <set>
+#include "Util.h"
+#include "DFGEntry.h"
+#include "Transformation.h"
+
 #include <queue>
+#include <set>
 
 #define DEBUG_TYPE "stream-specialize"
 
-CallInst *createAssembleCall(Type *Ty, StringRef OpStr,
-                           StringRef Operand, ArrayRef<Value*> Args,
-                           Instruction *Before) {
-  SmallVector<Type*, 0> ArgTypes;
+CallInst *createAssembleCall(Type *Ty, StringRef OpStr, StringRef Operand,
+                             ArrayRef<Value *> Args, Instruction *Before) {
+  SmallVector<Type *, 0> ArgTypes;
   for (auto &Elem : Args)
     ArgTypes.push_back(Elem->getType());
   auto FuncTy = FunctionType::get(Ty, ArgTypes, false);
@@ -35,14 +37,18 @@ std::string funcNameToDFGName(const StringRef &Name) {
   if (Name.equals(OffloadPrefix))
     return "dfg0.dfg";
   assert(Name[OffloadPrefix.size()] == '.');
-  return formatv("dfg{0}.dfg", Name.substr(OffloadPrefix.size() + 1, Name.size())).str();
+  return formatv("dfg{0}.dfg",
+                 Name.substr(OffloadPrefix.size() + 1, Name.size()))
+      .str();
 }
 
-Value *GetLoopTripCount(ScalarEvolution *SE, SCEVExpander *Expander, Loop *Loop, Instruction *InsertBefore) {
+Value *GetLoopTripCount(ScalarEvolution *SE, SCEVExpander *Expander, Loop *Loop,
+                        Instruction *InsertBefore) {
   auto One = createConstant(Loop->getExitBlock()->getContext(), 1);
-  auto MinusOne = Expander->expandCodeFor(SE->getBackedgeTakenCount(Loop), nullptr, InsertBefore);
-  auto TripCount = BinaryOperator::Create(Instruction::Add, MinusOne, One, "trip.count",
-                                          InsertBefore);
+  auto MinusOne = Expander->expandCodeFor(SE->getBackedgeTakenCount(Loop),
+                                          nullptr, InsertBefore);
+  auto TripCount = BinaryOperator::Create(Instruction::Add, MinusOne, One,
+                                          "trip.count", InsertBefore);
   return TripCount;
 }
 
@@ -59,13 +65,16 @@ bool CanBeAEntry(Value *Val) {
 
 Value *CeilDiv(Value *A, Value *B, Instruction *InsertBefore) {
   auto One = createConstant(A->getContext(), 1);
-  auto SubOne = BinaryOperator::Create(BinaryOperator::Sub, A, One, "", InsertBefore);
-  auto Div = BinaryOperator::Create(BinaryOperator::SDiv, SubOne, B, "", InsertBefore);
-  return BinaryOperator::Create(BinaryOperator::Add, Div, One, "", InsertBefore);
+  auto SubOne =
+      BinaryOperator::Create(BinaryOperator::Sub, A, One, "", InsertBefore);
+  auto Div =
+      BinaryOperator::Create(BinaryOperator::SDiv, SubOne, B, "", InsertBefore);
+  return BinaryOperator::Create(BinaryOperator::Add, Div, One, "",
+                                InsertBefore);
 }
 
-void FindEquivPHIs(Instruction *Inst, std::set<Instruction*> &Equiv) {
-  std::queue<Instruction*> Q;
+void FindEquivPHIs(Instruction *Inst, std::set<Instruction *> &Equiv) {
+  std::queue<Instruction *> Q;
   Q.push(Inst);
   Equiv.insert(Inst);
   while (!Q.empty()) {
@@ -92,12 +101,8 @@ void FindEquivPHIs(Instruction *Inst, std::set<Instruction*> &Equiv) {
     Q.pop();
   }
 
-  LLVM_DEBUG(
-    errs() << "equiv of "; Inst->dump();
-    for (auto I : Equiv) {
-      I->dump();
-    }
-  );
+  LLVM_DEBUG(errs() << "equiv of "; Inst->dump(); for (auto I
+                                                       : Equiv) { I->dump(); });
 }
 
 int PredicateToInt(ICmpInst::Predicate Pred, bool TF, bool Reverse) {
@@ -135,7 +140,8 @@ BasicBlock *FindLoopPrologue(Loop *L) {
   assert(BI);
   for (size_t i = 0; i < BI->getNumSuccessors(); ++i) {
     auto DstBB = BI->getSuccessor(i);
-    LLVM_DEBUG(dbgs() << "Inject stream wait fence " << DstBB->getName() << "\n");
+    LLVM_DEBUG(dbgs() << "Inject stream wait fence " << DstBB->getName()
+                      << "\n");
     if (!L->getBlocksSet().count(DstBB)) {
       return DstBB;
     }
@@ -160,6 +166,49 @@ ModuleFlags &ModuleContext() {
   return Instance;
 }
 
-}
-}
+} // namespace utils
+} // namespace dsa
 
+raw_ostream &operator<<(raw_ostream &os, DFGEntry &DE) {
+
+  static const char *KindStr[] = {
+      "DFGEntry",
+
+      // Computation {
+      "ComputeStarts", "ComputeBody", "Duplicate", "Accumulator", "ComputeEnds",
+      // }
+
+      // Predicate {
+      "Predicate",
+      // }
+
+      // Port {
+      "PortStarts", "PortBase",
+
+      // InPort {
+      "InPortStarts", "InputPort", "MemPort", "IndMemPort", "CtrlMemPort",
+      "InputConst", "StreamInPort", "CtrlSignal", "InPortEnds",
+      // }
+
+      // OutPort {
+      "OutPortStarts", "OutputPort", "PortMem", "AtomicPortMem", "StreamOutPort",
+      "OutPortEnds",
+      // }
+
+      "PortEnds"
+      // }
+  };
+
+  os << "# [" << KindStr[(int) DE.Kind] << "]: DFG" << DE.Parent->ID << " Entry"
+     << DE.ID << "\n";
+  int i = 0;
+  auto Insts = DE.UnderlyingInsts();
+  for (auto Elem : Insts) {
+    os << "# Inst";
+    if (Insts.size() != 1) {
+      os << i++;
+    }
+    os << ": " << *Elem << "\n";
+  }
+  return os;
+}

@@ -7,9 +7,9 @@
 namespace dsa {
 namespace analysis {
 
-std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>>
+std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
 GatherConfigScope(Function &F) {
-  std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>> Res;
+  std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Res;
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (auto End = dyn_cast<IntrinsicInst>(&I)) {
@@ -23,7 +23,6 @@ GatherConfigScope(Function &F) {
   }
   return Res;
 }
-
 
 /*!
  * \brief How DFG Entries are analyzed and extracted.
@@ -39,12 +38,12 @@ struct DFGEntryAnalyzer : DFGVisitor {
   DominatorTree *DT;
 
   /*!
-   * \brief Find all the PHI function that is essentially the same value as the given instruction.
-   * \param Inst The instruction to be analyzed.
-   * \param Equiv The result to be stored.
+   * \brief Find all the PHI function that is essentially the same value as the
+   * given instruction. \param Inst The instruction to be analyzed. \param Equiv
+   * The result to be stored.
    */
-  void FindEquivPHIs(Instruction *Inst, std::set<Instruction*> &Equiv) {
-    std::queue<Instruction*> Q;
+  void FindEquivPHIs(Instruction *Inst, std::set<Instruction *> &Equiv) {
+    std::queue<Instruction *> Q;
     Q.push(Inst);
     Equiv.insert(Inst);
     while (!Q.empty()) {
@@ -71,18 +70,18 @@ struct DFGEntryAnalyzer : DFGVisitor {
       Q.pop();
     }
 
-    LLVM_DEBUG(
-      INFO << "equiv of " << *Inst;
-      for (auto I : Equiv) { INFO << *I; }
-    );
+    LLVM_DEBUG(INFO << "equiv of " << *Inst; for (auto I
+                                                  : Equiv) { INFO << *I; });
   }
 
-  Predicate* FindEquivPredicate(Value *LHS, Value *RHS) {
+  Predicate *FindEquivPredicate(Value *LHS, Value *RHS) {
     auto &DB = *DBPtr;
     for (auto Elem : DB.EntryFilter<Predicate>()) {
-      if (Elem->Cond[0]->getOperand(0) == LHS && Elem->Cond[0]->getOperand(1) == RHS)
+      if (Elem->Cond[0]->getOperand(0) == LHS &&
+          Elem->Cond[0]->getOperand(1) == RHS)
         return Elem;
-      if (Elem->Cond[0]->getOperand(1) == LHS && Elem->Cond[0]->getOperand(0) == RHS)
+      if (Elem->Cond[0]->getOperand(1) == LHS &&
+          Elem->Cond[0]->getOperand(0) == RHS)
         return Elem;
     }
     return nullptr;
@@ -94,7 +93,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
       auto BFSBack = BFSOperands(GEP);
 
-      auto fLoad = [this, Load, BFSBack, &DB] (Value *Val) -> DFGEntry* {
+      auto fLoad = [this, Load, BFSBack, &DB](Value *Val) -> DFGEntry * {
         LoadInst *IdxLoad = nullptr;
         for (auto Elem : BFSBack.first) {
           if (auto ThisLoad = dyn_cast<LoadInst>(Elem)) {
@@ -108,7 +107,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         return nullptr;
       };
 
-      auto fGather = [Load, GEP, this, &DB] (Value *Val) -> DFGEntry* {
+      auto fGather = [Load, GEP, this, &DB](Value *Val) -> DFGEntry * {
         auto DD = dyn_cast<DedicatedDFG>(&DB);
 
         auto Casted = dyn_cast<Instruction>(Val);
@@ -120,7 +119,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
         {
           bool simpleLoop = false;
-          auto BI = dyn_cast<BranchInst>(&DD->InnerMost()->getLoopLatch()->back());
+          auto BI =
+              dyn_cast<BranchInst>(&DD->InnerMost()->getLoopLatch()->back());
           auto Latch = DD->InnerMost()->getLoopLatch();
           assert(BI);
           for (auto BB : BI->successors()) {
@@ -133,19 +133,20 @@ struct DFGEntryAnalyzer : DFGVisitor {
           }
         }
 
-        std::set<Instruction*> Equiv;
+        std::set<Instruction *> Equiv;
         LLVM_DEBUG(dbgs() << "Equiv of: ");
         FindEquivPHIs(Casted, Equiv);
 
         Value *TripCount = nullptr;
-        SmallVector<std::pair<ICmpInst*, bool>, 0> Conditions;
+        SmallVector<std::pair<ICmpInst *, bool>, 0> Conditions;
         for (auto Elem : Equiv) {
           if (auto PHI = dyn_cast<PHINode>(Elem)) {
             for (auto &Essense : PHI->incoming_values()) {
               auto Inst = dyn_cast<Instruction>(Essense);
               if (Inst && !isa<PHINode>(Inst)) {
                 if (Inst->getOpcode() == BinaryOperator::Add) {
-                  auto DomBB = DT->getNode(Inst->getParent())->getIDom()->getBlock();
+                  auto DomBB =
+                      DT->getNode(Inst->getParent())->getIDom()->getBlock();
                   LLVM_DEBUG(DomBB->back().dump(); Inst->dump());
                   auto BI = dyn_cast<BranchInst>(&DomBB->back());
                   assert(BI);
@@ -154,18 +155,23 @@ struct DFGEntryAnalyzer : DFGVisitor {
                     bool OK = true;
                     for (size_t i = 0; i < Conditions.size(); ++i) {
                       auto AlreadyCmp = Conditions[i].first;
-                      if (CondCmp->getNumOperands() != AlreadyCmp->getNumOperands()) {
+                      if (CondCmp->getNumOperands() !=
+                          AlreadyCmp->getNumOperands()) {
                         OK = false;
                         break;
                       }
-                      OK = OK && ((AlreadyCmp->getOperand(0) == CondCmp->getOperand(0) &&
-                                  AlreadyCmp->getOperand(1) == CondCmp->getOperand(1)) ||
-                                  (AlreadyCmp->getOperand(0) == CondCmp->getOperand(1) &&
-                                  AlreadyCmp->getOperand(1) == CondCmp->getOperand(0)));
+                      OK = OK && ((AlreadyCmp->getOperand(0) ==
+                                       CondCmp->getOperand(0) &&
+                                   AlreadyCmp->getOperand(1) ==
+                                       CondCmp->getOperand(1)) ||
+                                  (AlreadyCmp->getOperand(0) ==
+                                       CondCmp->getOperand(1) &&
+                                   AlreadyCmp->getOperand(1) ==
+                                       CondCmp->getOperand(0)));
                     }
                     assert(OK && "Controlled by more than one predicate!");
-                    Conditions.push_back(std::make_pair(CondCmp,
-                                                        Inst->getParent() == BI->getSuccessor(0)));
+                    Conditions.push_back(std::make_pair(
+                        CondCmp, Inst->getParent() == BI->getSuccessor(0)));
                   }
                 }
               }
@@ -195,8 +201,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
           int Mask = 0;
           SmallVector<bool, 0> Reverse;
 
-          auto Pred =
-            FindEquivPredicate(Conditions[0].first->getOperand(0), Conditions[0].first->getOperand(1));
+          auto Pred = FindEquivPredicate(Conditions[0].first->getOperand(0),
+                                         Conditions[0].first->getOperand(1));
 
           if (!Pred) {
             Pred = new Predicate(&DB, Conditions[0].first);
@@ -209,15 +215,19 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
           for (size_t i = 0; i < Conditions.size(); ++i) {
             auto Cond = Conditions[i];
-            LLVM_DEBUG(dbgs() << "Moveforward: " << Cond.second << " "; Cond.first->dump());
-            int SubMask = PredicateToInt(Cond.first->getPredicate(), Cond.second, Reverse[i]);
+            LLVM_DEBUG(dbgs() << "Moveforward: " << Cond.second << " ";
+                       Cond.first->dump());
+            int SubMask = PredicateToInt(Cond.first->getPredicate(),
+                                         Cond.second, Reverse[i]);
             Mask |= SubMask;
           }
 
           LLVM_DEBUG(dbgs() << "Forward mask: " << Mask << "\n");
-          // FIXME: GEP for not is good enough, but we need a better way to figure out the start
+          // FIXME: GEP for not is good enough, but we need a better way to
+          // figure out the start
           //        pointer later.
-          return new CtrlMemPort(&DB, Load, GEP->getOperand(0), TripCount, Pred, Mask);
+          return new CtrlMemPort(&DB, Load, GEP->getOperand(0), TripCount, Pred,
+                                 Mask);
         }
         LLVM_DEBUG(dbgs() << "\n");
         return nullptr;
@@ -240,13 +250,13 @@ struct DFGEntryAnalyzer : DFGVisitor {
     return new MemPort(&DB, Load);
   }
 
-
   /*!
-   * \brief Starting with the given instructions, BFS out to find all instrucitons slices.
-   * \param Q The given starting instructions.
-   * \param Visited Push the found instruction.
+   * \brief Starting with the given instructions, BFS out to find all
+   * instrucitons slices. \param Q The given starting instructions. \param
+   * Visited Push the found instruction.
    */
-  void GatherEntryInsts(std::queue<Instruction*> &Q, std::vector<Instruction*> &Visited) {
+  void GatherEntryInsts(std::queue<Instruction *> &Q,
+                        std::vector<Instruction *> &Visited) {
     auto &DB = *DBPtr;
     while (!Q.empty()) {
       auto Cur = Q.front();
@@ -285,8 +295,10 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
     bool isAcc = false;
 
-    auto ToOffload = !isa<BranchInst>(Inst) ? Inst :
-      dyn_cast<Instruction>(dyn_cast<BranchInst>(Inst)->getCondition());
+    auto ToOffload =
+        !isa<BranchInst>(Inst)
+            ? Inst
+            : dyn_cast<Instruction>(dyn_cast<BranchInst>(Inst)->getCondition());
 
     for (size_t i = 0; i < ToOffload->getNumOperands(); ++i) {
       auto Operand = ToOffload->getOperand(i);
@@ -297,11 +309,12 @@ struct DFGEntryAnalyzer : DFGVisitor {
       }
       if (auto Phi = dyn_cast<PHINode>(Operand)) {
 
-        std::queue<PHINode*> Q;
-        std::set<PHINode*> Visited;
+        std::queue<PHINode *> Q;
+        std::set<PHINode *> Visited;
 
-        for (Q.push(Phi), Visited.insert(Phi); !Q.empty(); ) {
-          auto Poll = Q.front(); Q.pop();
+        for (Q.push(Phi), Visited.insert(Phi); !Q.empty();) {
+          auto Poll = Q.front();
+          Q.pop();
           for (auto &InComing : Poll->incoming_values()) {
             if (InComing == Inst) {
               isAcc = true;
@@ -323,7 +336,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
       } else if (auto Load = dyn_cast<LoadInst>(Operand)) {
         DB.Entries.push_back(DifferentiateMemoryStream(Load));
       } else if (auto Consumee = dyn_cast<Instruction>(Operand)) {
-        LLVM_DEBUG(dbgs() << "Not in this Nest: " << DB.Contains(Consumee) << "\n");
+        LLVM_DEBUG(dbgs() << "Not in this Nest: " << DB.Contains(Consumee)
+                          << "\n");
         if (!DB.Contains(Consumee)) {
           if (DB.BelongOtherDFG(Consumee)) {
             DB.Entries.push_back(new StreamInPort(&DB, Consumee));
@@ -343,15 +357,17 @@ struct DFGEntryAnalyzer : DFGVisitor {
     if (!isAcc) {
       if (auto BI = dyn_cast<BranchInst>(Inst)) {
         assert(BI->isConditional());
-        if (ICmpInst* Cmp = dyn_cast<ICmpInst>(BI->getCondition())) {
-          Predicate *PredEntry = FindEquivPredicate(Cmp->getOperand(0), Cmp->getOperand(1));
+        if (ICmpInst *Cmp = dyn_cast<ICmpInst>(BI->getCondition())) {
+          Predicate *PredEntry =
+              FindEquivPredicate(Cmp->getOperand(0), Cmp->getOperand(1));
           if (!PredEntry) {
             PredEntry = new Predicate(&DB, Cmp);
             DB.Entries.push_back(PredEntry);
           } else {
             PredEntry->addCond(Cmp);
           }
-        } else if (Instruction *Cond = dyn_cast<Instruction>(BI->getCondition())) {
+        } else if (Instruction *Cond =
+                       dyn_cast<Instruction>(BI->getCondition())) {
           DB.Entries.push_back(new Predicate(&DB, Cond));
         }
         Entry = DB.Entries.back();
@@ -382,16 +398,17 @@ struct DFGEntryAnalyzer : DFGVisitor {
   void InspectConsumers(Instruction *Inst) {
     auto &DB = *DBPtr;
     auto &Entries = DB.Entries;
-    std::set<Instruction*> Equiv;
+    std::set<Instruction *> Equiv;
     FindEquivPHIs(Inst, Equiv);
     for (auto Elem : Equiv) {
       for (auto User : Elem->users()) {
         if (auto Store = dyn_cast<StoreInst>(User)) {
           LoadInst *Load = nullptr;
 
-          if (auto GEP = dyn_cast<GetElementPtrInst>(Store->getPointerOperand())) {
+          if (auto GEP =
+                  dyn_cast<GetElementPtrInst>(Store->getPointerOperand())) {
             for (size_t i = 0; i < GEP->getNumOperands(); ++i) {
-              if ((bool) (Load = dyn_cast<LoadInst>(GEP->getOperand(i)))) {
+              if ((bool)(Load = dyn_cast<LoadInst>(GEP->getOperand(i)))) {
                 break;
               }
             }
@@ -404,17 +421,19 @@ struct DFGEntryAnalyzer : DFGVisitor {
               if (BO->getOpcode() == Instruction::BinaryOps::Add) {
                 for (size_t i = 0; i < BO->getNumOperands(); ++i) {
                   auto Operand = dyn_cast<LoadInst>(BO->getOperand(i));
-                  if (Operand && Operand->getPointerOperand() == Store->getPointerOperand()) {
+                  if (Operand && Operand->getPointerOperand() ==
+                                     Store->getPointerOperand()) {
                     isUpdate = true;
                   } else {
                     AtomicOperand = BO->getOperand(i);
                   }
                 }
               }
-              Entries.push_back(new AtomicPortMem(&DB, Load, Store, isUpdate ? 0 : 3,
-                                                  Inst, AtomicOperand));
+              Entries.push_back(new AtomicPortMem(
+                  &DB, Load, Store, isUpdate ? 0 : 3, Inst, AtomicOperand));
             } else {
-              Entries.push_back(new AtomicPortMem(&DB, Load, Store, 3, Inst, nullptr));
+              Entries.push_back(
+                  new AtomicPortMem(&DB, Load, Store, 3, Inst, nullptr));
             }
             LLVM_DEBUG(INFO << "AtomicMem: " << *Inst);
 
@@ -447,11 +466,11 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
   }
 
-  std::pair<std::set<Instruction*>, std::set<Instruction*>>
+  std::pair<std::set<Instruction *>, std::set<Instruction *>>
   BFSOperands(Instruction *From) {
     auto &DB = *DBPtr;
-    std::set<Instruction*> Visited, OutBound;
-    std::queue<Instruction*> Q;
+    std::set<Instruction *> Visited, OutBound;
+    std::queue<Instruction *> Q;
     Visited.insert(From);
     Q.push(From);
     while (!Q.empty()) {
@@ -477,19 +496,20 @@ struct DFGEntryAnalyzer : DFGVisitor {
   }
 
   void Visit(DedicatedDFG *DDPtr) {
-    std::vector<Instruction*> Visited;
+    std::vector<Instruction *> Visited;
     DBPtr = DDPtr;
     auto &DD = *DDPtr;
-    std::queue<Instruction*> Q;
+    std::queue<Instruction *> Q;
 
     for (auto BB : DD.InnerMost()->getBlocks()) {
 
-      // I am not sure if this is a safe assumption: All the blocks have its own immediate dom.
+      // I am not sure if this is a safe assumption: All the blocks have its own
+      // immediate dom.
       auto DomBB = DT->getNode(BB)->getIDom()->getBlock();
 
       // Is the assumption too strong here?
-      // A intruction with a idom conditional instruction which does not belong to this DFG indicates
-      // the predicate is always true.
+      // A intruction with a idom conditional instruction which does not belong
+      // to this DFG indicates the predicate is always true.
       if (DD.InnerMost()->getBlocksSet().count(DomBB)) {
         auto BI = dyn_cast<BranchInst>(&DomBB->back());
         if (BI->isConditional()) {
@@ -511,6 +531,18 @@ struct DFGEntryAnalyzer : DFGVisitor {
         InspectConsumers(Inst);
       }
     }
+
+    if (DD.Entries.empty()) {
+      CHECK(Visited.size() == 1 && isa<LoadInst>(Visited[0]));
+      DD.Entries.push_back(DifferentiateMemoryStream(dyn_cast<LoadInst>(Visited[0])));
+      InspectConsumers(Visited[0]);
+      for (auto Elem : DD.Entries) {
+        INFO << *Elem;
+      }
+    }
+
+    CHECK(!DD.Entries.empty());
+
 
     // TODO(@were): Open this to support data move.
     // for (auto Inst : Visited) {
@@ -544,16 +576,16 @@ struct DFGEntryAnalyzer : DFGVisitor {
     //     }
     //   }
     // }
-
   }
 
   void Visit(TemporalDFG *TD) override {
     DBPtr = TD;
-    std::queue<Instruction*> Q;
-    std::vector<Instruction*> Visited;
+    std::queue<Instruction *> Q;
+    std::vector<Instruction *> Visited;
     CHECK(TD->getBlocks().size() == 1);
 
-    for (auto I = TD->Begin->getNextNode(); I != TD->End; I = I->getNextNode()) {
+    for (auto I = TD->Begin->getNextNode(); I != TD->End;
+         I = I->getNextNode()) {
       if (CanBeAEntry(I)) {
         Q.push(I);
         Visited.push_back(I);
@@ -564,24 +596,22 @@ struct DFGEntryAnalyzer : DFGVisitor {
     for (auto Inst : Visited) {
       if (!isa<LoadInst>(Inst)) {
         InspectOperands(Inst);
-        std::set<Instruction*> Equiv;
+        std::set<Instruction *> Equiv;
         InspectConsumers(Inst);
       }
     }
-
   }
 
   DFGEntryAnalyzer(DominatorTree *DT_) : DT(DT_) {}
 };
 
-
-void ExtractDFGFromScope(DFGFile &DF,
-                         IntrinsicInst *Start, IntrinsicInst *End,
+void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
                          DominatorTree *DT, LoopInfo *LI) {
   // Extract the sketch of dedicated and temporal DFGs respectively.
   // The instruction entries in each DFG cannot be instantiated until all the
-  // sketches are extracted, because we need this to analyze inter-DFG communication in one pass.
-  std::set<BasicBlock*> OutOfBound;
+  // sketches are extracted, because we need this to analyze inter-DFG
+  // communication in one pass.
+  std::set<BasicBlock *> OutOfBound;
   for (auto BBN : breadth_first(DT->getNode(End->getParent()))) {
     if (BBN->getBlock() == End->getParent())
       continue;
@@ -600,9 +630,11 @@ void ExtractDFGFromScope(DFGFile &DF,
       }
       if (!InBound)
         continue;
-      if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(), "llvm.loop.ss.dedicated")) {
+      if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(),
+                                         "llvm.loop.ss.dedicated")) {
         auto MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
-        int Factor =(int) MDFactor->getValue()->getUniqueInteger().getSExtValue();
+        int Factor =
+            (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
         auto DD = new DedicatedDFG(&DF, SubLoop, Factor);
         DF.addDFG(DD);
       }
@@ -610,18 +642,21 @@ void ExtractDFGFromScope(DFGFile &DF,
   }
   for (auto BBN : breadth_first(DT->getNode(Start->getParent()))) {
     auto BB = BBN->getBlock();
-    auto range = make_range(BB != Start->getParent() ? BB->begin() : Start->getIterator(),
-                            BB != End->getParent() ? BB->end() : End->getIterator());
+    auto range = make_range(
+        BB != Start->getParent() ? BB->begin() : Start->getIterator(),
+        BB != End->getParent() ? BB->end() : End->getIterator());
     for (auto &I : range) {
       auto TemporalStart = dyn_cast<IntrinsicInst>(&I);
-      if (!TemporalStart || TemporalStart->getIntrinsicID() != Intrinsic::ss_temporal_region_start)
+      if (!TemporalStart || TemporalStart->getIntrinsicID() !=
+                                Intrinsic::ss_temporal_region_start)
         continue;
       // TODO: Maybe later we need control flow in the temporal regions
       bool Found = false;
-      for (Instruction *Cur =TemporalStart; Cur != &Cur->getParent()->back();
-        Cur = Cur->getNextNode()) {
+      for (Instruction *Cur = TemporalStart; Cur != &Cur->getParent()->back();
+           Cur = Cur->getNextNode()) {
         if (auto TemporalEnd = dyn_cast<IntrinsicInst>(Cur)) {
-          if (TemporalEnd->getIntrinsicID() != Intrinsic::ss_temporal_region_end)
+          if (TemporalEnd->getIntrinsicID() !=
+              Intrinsic::ss_temporal_region_end)
             continue;
           CHECK(TemporalEnd->getOperand(0) == TemporalStart);
           auto TD = new TemporalDFG(&DF, TemporalStart, TemporalEnd);
@@ -641,7 +676,6 @@ void ExtractDFGFromScope(DFGFile &DF,
     DFGEntryAnalyzer DEA(DT);
     Elem->Accept(&DEA);
   }
-
 }
 
 ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
@@ -649,12 +683,12 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
   auto DFGs = DF.DFGFilter<DFGBase>();
 
   std::string Stripped(FName);
-  while (Stripped.back() != '.') Stripped.pop_back();
+  while (Stripped.back() != '.')
+    Stripped.pop_back();
   Stripped.pop_back();
 
   int ConfigSize = 0;
   std::string ConfigString;
-  INFO << FName;
 
   std::string Line;
   std::string PortPrefix(formatv("P_{0}_", Stripped).str());
@@ -686,7 +720,8 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
             }
             // FIXME: For now only one destination is supported
             // Later divergence will be supported
-            CHECK(OutPorts.size() == 1) << *CB->UnderlyingInst() << " " << OutPorts.size();
+            CHECK(OutPorts.size() == 1)
+                << *CB->UnderlyingInst() << " " << OutPorts.size();
             OutPorts[0]->SoftPortNum = Port;
 
             // Fill in the latency of each node.
@@ -696,8 +731,8 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
             //  for (auto SDVO : dfg.nodes<SSDFGVecOutput*>()) {
             //    if (SDVO->name() == ON) {
             //      OP->Latency = sched->latOf(SDVO);
-            //      LLVM_DEBUG(dbgs() << "[lat] " << ON << ": " << OP->Latency << "\n");
-            //      break;
+            //      LLVM_DEBUG(dbgs() << "[lat] " << ON << ": " << OP->Latency
+            //      << "\n"); break;
             //    }
             //  }
             //}
@@ -708,7 +743,7 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
         } else {
           CHECK(false) << "DSAPass port information gathering unreachable!";
         }
-      // #define dfgx_size size
+        // #define dfgx_size size
       } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {
         iss >> ConfigSize;
       } else if (Token.find(PortPrefix + "indirect_") == 0) {
@@ -728,7 +763,7 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
           IMP->IndexOutPort = Port;
         }
       }
-    // char dfgx_config[size] = "filename:dfgx.sched";
+      // char dfgx_config[size] = "filename:dfgx.sched";
     } else if (Token == "char") {
       // dfgx_config[size]
       iss >> Token;
@@ -744,8 +779,32 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
   LLVM_DEBUG(INFO << "[Config] " << ConfigSize << ": " << ConfigString << "\n");
 
   return ConfigInfo(Stripped, ConfigString, ConfigSize);
-
 }
 
+
+DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
+  struct DFGLoopAnalyzer : DFGVisitor {
+    void Visit(DedicatedDFG *DD) override {
+      auto &LoopNest = DD->LoopNest;
+      DLI.LoopNest = LoopNest;
+      for (int i = 0; i < (int) LoopNest.size(); ++i) {
+        DLI.TripCount.push_back(
+          analysis::AnalyzeIndexExpr(&SE, SE.getBackedgeTakenCount(LoopNest[i]), LoopNest));
+      }
+    }
+
+    void Visit(TemporalDFG *TD) override {}
+
+    DFGLoopInfo DLI;
+    ScalarEvolution &SE;
+
+    DFGLoopAnalyzer(ScalarEvolution &SE_) : SE(SE_) {}
+  };
+
+  DFGLoopAnalyzer DLA(SE);
+  DB->Accept(&DLA);
+  return DLA.DLI;
 }
-}
+
+} // namespace analysis
+} // namespace dsa

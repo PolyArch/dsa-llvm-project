@@ -11,13 +11,12 @@
 namespace dsa {
 namespace analysis {
 
-
-LinearInfo *LinearInfo::LoopInvariant(ScalarEvolution *SE, int N, const SCEV *Base) {
+LinearInfo *LinearInfo::LoopInvariant(ScalarEvolution *SE, int N,
+                                      const SCEV *Base) {
   auto LI = new LinearInfo();
   LI->Base = Base;
   return LI;
 }
-
 
 const uint64_t *LinearInfo::ConstInt() const {
   if (!Invariant()) {
@@ -34,14 +33,14 @@ const SCEV *LinearInfo::Invariant() const {
   return Coef.empty() ? Base : nullptr;
 }
 
-
-std::string LinearInfo::toString(const std::vector<Loop*> &Loops) {
+std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
   std::string S;
   llvm::raw_string_ostream RSO(S);
   if (Coef.empty()) {
     RSO << *Base;
   } else {
-    CHECK(Loops.empty() || Loops.size() == Coef.size()) << Loops.size() << " ? " << Coef.size();
+    CHECK(Loops.empty() || Loops.size() == Coef.size())
+        << Loops.size() << " ? " << Coef.size();
     RSO << "(";
     for (int i = 0, N = Coef.size(); i < N; ++i) {
       if (!Loops.empty()) {
@@ -49,7 +48,8 @@ std::string LinearInfo::toString(const std::vector<Loop*> &Loops) {
           if (IndVar->hasName()) {
             RSO << IndVar->getName();
           } else {
-            ModuleSlotTracker MST(IndVar->getParent()->getParent()->getParent());
+            ModuleSlotTracker MST(
+                IndVar->getParent()->getParent()->getParent());
             MST.incorporateFunction(*IndVar->getParent()->getParent());
             RSO << "%" << MST.getLocalSlot(IndVar);
           }
@@ -77,13 +77,13 @@ int LinearInfo::PatialInvariant() const {
   return Coef.size();
 }
 
-
-LinearInfo*
-AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, const std::vector<Loop*> &Loops) {
+LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
+                             const std::vector<Loop *> &Loops) {
   LinearInfo *LI = new LinearInfo();
   int i = 0;
   auto AppendZero = [SE, LI, &Loops]() {
-    auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0)));
+    auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
+                                          SE->getConstant(APInt(64, 0)));
     LI->Coef.push_back(Coef);
   };
   for (int N = Loops.size(); i < N; ++i) {
@@ -92,8 +92,8 @@ AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, const std::vector<Loop*> 
     }
     AppendZero();
   }
-  if (!isa<SCEVAddRecExpr>(Raw) || i == (int) Loops.size()) {
-    CHECK(i == (int) Loops.size()) << i << " != " << Loops.size();
+  if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
+    CHECK(i == (int)Loops.size()) << i << " != " << Loops.size();
     LI->Coef.clear();
     LI->Coef.shrink_to_fit();
     LI->Base = Raw;
@@ -102,19 +102,23 @@ AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, const std::vector<Loop*> 
   for (int N = Loops.size(); i < N; ++i) {
     if (auto SARE = dyn_cast<SCEVAddRecExpr>(Raw)) {
       if (!Loops.back()->contains(SARE->getLoop())) {
-        CHECK(SE->isLoopInvariant(Raw, Loops[i])) << "I do not know how to handle this yet.";
+        CHECK(SE->isLoopInvariant(Raw, Loops[i]))
+            << "I do not know how to handle this yet.";
         AppendZero();
         continue;
       }
       if (SARE->getLoop() != Loops[i]) {
-        auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0)));
+        auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
+                                              SE->getConstant(APInt(64, 0)));
         LI->Coef.push_back(Coef);
         continue;
       }
-      LI->Coef.push_back(AnalyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Loops));
+      LI->Coef.push_back(
+          AnalyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Loops));
       Raw = SARE->getStart();
     } else {
-      CHECK(SE->isLoopInvariant(Raw, Loops[i])) << "I do not know how to handle this yet.";
+      CHECK(SE->isLoopInvariant(Raw, Loops[i]))
+          << "I do not know how to handle this yet.";
       AppendZero();
     }
   }
@@ -122,7 +126,6 @@ AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, const std::vector<Loop*> 
   LI->Base = Raw;
   return LI;
 }
-
 
 namespace test {
 
@@ -133,9 +136,9 @@ struct StreamAnalysisPass : public FunctionPass {
   ScalarEvolution *SE{nullptr};
   LoopInfo *LI{nullptr};
   DependenceInfo *DI{nullptr};
-  std::vector<Loop*> Loops;
+  std::vector<Loop *> Loops;
 
-  void AnalyzeLoopNest(const std::vector<Loop*> &Loops) {
+  void AnalyzeLoopNest(const std::vector<Loop *> &Loops) {
     auto L = Loops.front();
     for (auto &BB : L->getBlocks()) {
       for (auto &I : *BB) {
@@ -195,12 +198,12 @@ struct StreamAnalysisPass : public FunctionPass {
     AU.addRequired<ScalarEvolutionWrapperPass>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
     AU.addRequired<AAResultsWrapperPass>();
-    //AU.addRequired<DemandedBitsWrapperPass>();
+    // AU.addRequired<DemandedBitsWrapperPass>();
     AU.addRequired<TargetLibraryInfoWrapperPass>();
     AU.addRequired<MemorySSAWrapperPass>();
     AU.addPreserved<LoopInfoWrapperPass>();
-    //AU.addPreserved<BasicAAWrapperPass>();
-    //AU.addPreserved<GlobalsAAWrapperPass>();
+    // AU.addPreserved<BasicAAWrapperPass>();
+    // AU.addPreserved<GlobalsAAWrapperPass>();
     AU.addPreserved<DependenceAnalysisWrapperPass>();
   }
 
@@ -211,9 +214,10 @@ struct StreamAnalysisPass : public FunctionPass {
 
 char StreamAnalysisPass::ID = 0;
 
-static RegisterPass<StreamAnalysisPass> Y("analyze-stream", "Invoke stream analysis from streams...");
+static RegisterPass<StreamAnalysisPass>
+    Y("analyze-stream", "Invoke stream analysis from streams...");
 
-}
+} // namespace test
 
-}
-}
+} // namespace analysis
+} // namespace dsa
