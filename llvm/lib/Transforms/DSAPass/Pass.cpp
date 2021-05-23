@@ -70,9 +70,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DSARegs = dsa::xform::InjectDSARegisterFile(F);
     }
   } else {
-    LLVM_DEBUG(INFO << "No need to transform " << F.getName() << "\n");
+    LLVM_DEBUG(DSA_INFO << "No need to transform " << F.getName() << "\n");
   }
-  LLVM_DEBUG(INFO << "Transforming " << F.getName() << "\n");
+  LLVM_DEBUG(DSA_INFO << "Transforming " << F.getName() << "\n");
   SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
   dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE);
   for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
@@ -92,7 +92,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto Cmd =
         formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name)
             .str();
-    LLVM_DEBUG(INFO << Cmd);
+    LLVM_DEBUG(DSA_INFO << Cmd);
     CHECK(system(Cmd.c_str()) == 0)
         << "Not successfully scheduled! Try another DFG!";
     // TODO(@were): When making the DFG's of index expression is done, uncomment

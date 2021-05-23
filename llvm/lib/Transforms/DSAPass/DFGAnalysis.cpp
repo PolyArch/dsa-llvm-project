@@ -70,8 +70,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
       Q.pop();
     }
 
-    LLVM_DEBUG(INFO << "equiv of " << *Inst; for (auto I
-                                                  : Equiv) { INFO << *I; });
+    LLVM_DEBUG(DSA_INFO << "equiv of " << *Inst; for (auto I
+                                                  : Equiv) { DSA_INFO << *I; });
   }
 
   Predicate *FindEquivPredicate(Value *LHS, Value *RHS) {
@@ -261,19 +261,19 @@ struct DFGEntryAnalyzer : DFGVisitor {
     while (!Q.empty()) {
       auto Cur = Q.front();
       Q.pop();
-      LLVM_DEBUG(INFO << "Analyze Users of: " << *Cur);
+      LLVM_DEBUG(DSA_INFO << "Analyze Users of: " << *Cur);
       for (auto Elem : Cur->users()) {
         auto Inst = dyn_cast<Instruction>(Elem);
         if (!Inst) {
-          LLVM_DEBUG(INFO << "Not a Inst: " << *Elem);
+          LLVM_DEBUG(DSA_INFO << "Not a Inst: " << *Elem);
           continue;
         }
         if (!DB.Contains(Inst)) {
-          LLVM_DEBUG(INFO << "Not in blocks: " << *Elem);
+          LLVM_DEBUG(DSA_INFO << "Not in blocks: " << *Elem);
           continue;
         }
         if (!CanBeAEntry(Inst)) {
-          LLVM_DEBUG(INFO << "Not a entry: " << *Elem);
+          LLVM_DEBUG(DSA_INFO << "Not a entry: " << *Elem);
           continue;
         }
         if (std::find(Visited.begin(), Visited.end(), Inst) == Visited.end()) {
@@ -435,12 +435,12 @@ struct DFGEntryAnalyzer : DFGVisitor {
               Entries.push_back(
                   new AtomicPortMem(&DB, Load, Store, 3, Inst, nullptr));
             }
-            LLVM_DEBUG(INFO << "AtomicMem: " << *Inst);
+            LLVM_DEBUG(DSA_INFO << "AtomicMem: " << *Inst);
 
           } else {
             auto Out = new PortMem(&DB, Store);
             Entries.push_back(Out);
-            LLVM_DEBUG(INFO << "PortMem: " << *Inst);
+            LLVM_DEBUG(DSA_INFO << "PortMem: " << *Inst);
           }
         } else if (CanBeAEntry(User)) {
           // Understand this, why this cannot be an assertion?
@@ -449,7 +449,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
           if (DB.BelongOtherDFG(Consume)) {
             auto Out = new StreamOutPort(&DB, Inst);
             Entries.push_back(Out);
-            LLVM_DEBUG(INFO << "Stream " << *Inst << " to " << *Consume);
+            LLVM_DEBUG(DSA_INFO << "Stream " << *Inst << " to " << *Consume);
           }
         } else {
           if (auto UserInst = dyn_cast<Instruction>(User)) {
@@ -457,8 +457,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
               continue;
             if (!DB.BelongOtherDFG(UserInst) && !DB.InThisDFG(UserInst)) {
               Entries.push_back(new OutputPort(&DB, Inst));
-              LLVM_DEBUG(INFO << "Write to register: " << *Inst;
-                         INFO << "User: " << UserInst);
+              LLVM_DEBUG(DSA_INFO << "Write to register: " << *Inst;
+                         DSA_INFO << "User: " << UserInst);
             }
           }
         }
@@ -537,7 +537,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
       DD.Entries.push_back(DifferentiateMemoryStream(dyn_cast<LoadInst>(Visited[0])));
       InspectConsumers(Visited[0]);
       for (auto Elem : DD.Entries) {
-        INFO << *Elem;
+        DSA_INFO << *Elem;
       }
     }
 
@@ -776,7 +776,7 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
     }
   }
 
-  LLVM_DEBUG(INFO << "[Config] " << ConfigSize << ": " << ConfigString << "\n");
+  LLVM_DEBUG(DSA_INFO << "[Config] " << ConfigSize << ": " << ConfigString << "\n");
 
   return ConfigInfo(Stripped, ConfigString, ConfigSize);
 }
