@@ -28,8 +28,8 @@
 #include "Transformation.h"
 #include "Util.h"
 
-#include "dsa/rf.h"
-#include "dsa/spec.h"
+#include "dsa-ext/rf.h"
+#include "dsa-ext/spec.h"
 //#include "dsa/mapper/scheduler.h"
 //#include "dsa/mapper/scheduler_sa.h"
 
@@ -49,35 +49,35 @@ void DFGVisitor::Visit(TemporalDFG *Node) {
 
 namespace inject {
 
-std::stack<IRBuilder<> *> DSAIntrinsicEmitter::REG::IBStack;
+// std::stack<IRBuilder<> *> DSAIntrinsicEmitter::REG::IBStack;
 
-MemoryType
-InjectLinearStream(IRBuilder<> *IB,
-                   const std::vector<dsa::utils::StickyRegister> &Regs,
-                   int PortNum, const AnalyzedStream &Stream,
-                   MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
-  DSAIntrinsicEmitter DIE(IB, Regs);
-  Value *Start = std::get<0>(Stream.Dimensions.back());
-  Value *Bytes = std::get<1>(Stream.Dimensions.back());
-  Value *DTyValue = IB->getInt64(DType);
-  if (Stream.Dimensions.size() == 1) {
-    DIE.INSTANTIATE_1D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue), PortNum,
-                              PP, DSA_Access, MO, MT, DType, 0);
-    return DMT_DMA;
-  } else if (Stream.Dimensions.size() == 2) {
-    Value *Stride = std::get<0>(Stream.Dimensions[0]);
-    Value *N = std::get<1>(Stream.Dimensions[0]);
-    int Stretch = std::get<2>(Stream.Dimensions[0]);
-    DIE.INSTANTIATE_2D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue),
-                              DIE.DIV(Stride, DTyValue),
-                              IB->getInt64(Stretch / DType), N, PortNum, PP,
-                              DSA_Access, MO, MT, DType, 0);
-    return DMT_DMA;
-  } else {
-    llvm::errs() << Stream.Dimensions.size();
-  }
-  llvm_unreachable("Unsupported stream dimension");
-}
+// MemoryType
+// InjectLinearStream(IRBuilder<> *IB,
+//                    const std::vector<dsa::utils::StickyRegister> &Regs,
+//                    int PortNum, const AnalyzedStream &Stream,
+//                    MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
+//   DSAIntrinsicEmitter DIE(IB, Regs);
+//   Value *Start = std::get<0>(Stream.Dimensions.back());
+//   Value *Bytes = std::get<1>(Stream.Dimensions.back());
+//   Value *DTyValue = IB->getInt64(DType);
+//   if (Stream.Dimensions.size() == 1) {
+//     DIE.INSTANTIATE_1D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue), PortNum,
+//                               PP, DSA_Access, MO, MT, DType, 0);
+//     return DMT_DMA;
+//   } else if (Stream.Dimensions.size() == 2) {
+//     Value *Stride = std::get<0>(Stream.Dimensions[0]);
+//     Value *N = std::get<1>(Stream.Dimensions[0]);
+//     int Stretch = std::get<2>(Stream.Dimensions[0]);
+//     DIE.INSTANTIATE_2D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue),
+//                               DIE.DIV(Stride, DTyValue),
+//                               IB->getInt64(Stretch / DType), N, PortNum, PP,
+//                               DSA_Access, MO, MT, DType, 0);
+//     return DMT_DMA;
+//   } else {
+//     llvm::errs() << Stream.Dimensions.size();
+//   }
+//   llvm_unreachable("Unsupported stream dimension");
+// }
 
 } // namespace inject
 } // namespace dsa
@@ -229,123 +229,6 @@ int ScalarBits2T(int Bits) {
     return 3;
   }
   assert(false);
-}
-
-Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val,
-                                   int Port) {
-  SCEVExpander Expander(*Parent->Query->SE,
-                        Parent->Func.getParent()->getDataLayout(), "");
-
-  if (!AR.Prime) {
-    LLVM_DEBUG(dbgs() << "No repeat!\n");
-    return nullptr;
-  }
-
-  auto SE = Parent->Query->SE;
-  auto IB = Parent->Query->IBPtr;
-  auto One = createConstant(getCtx(), 1);
-
-  IB->SetInsertPoint(DefaultIP());
-
-  if (AR.PT == AnalyzedRepeat::PlainRepeat) {
-    auto PrimeRepeat = Expander.expandCodeFor(AR.Prime, nullptr, DefaultIP());
-    return InjectRepeat(IB->CreateAdd(PrimeRepeat, createConstant(getCtx(), 1)),
-                        AR.Wrapped, 0, Val, Port);
-  } else if (AR.PT == AnalyzedRepeat::StretchedRepeat) {
-    assert(AR.Prime->getSCEVType() == scAddRecExpr);
-    auto SARE = dyn_cast<SCEVAddRecExpr>(AR.Prime);
-    auto BT = Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()),
-                                     nullptr, DefaultIP());
-    auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr,
-                                     DefaultIP());
-    assert(isa<ConstantInt>(SV));
-    return InjectRepeat(IB->CreateAdd(BT, One), AR.Wrapped,
-                        dyn_cast<ConstantInt>(SV)->getSExtValue(), Val, Port);
-  } else if (AR.PT == AnalyzedRepeat::SumOfStretchedRepeat) {
-    // FIXME: Kinda ugly here.
-    // Once we have a better hardware support to do this we no longer need this
-    assert(AR.Prime->getSCEVType() == scAddRecExpr);
-    auto SARE = dyn_cast<SCEVAddRecExpr>(AR.Prime);
-    auto First = IB->CreateAdd(
-        Expander.expandCodeFor(SARE->getStart(), nullptr, DefaultIP()), One);
-    auto BT = Expander.expandCodeFor(SE->getBackedgeTakenCount(SARE->getLoop()),
-                                     nullptr, DefaultIP());
-    auto SV = Expander.expandCodeFor(SARE->getStepRecurrence(*SE), nullptr,
-                                     DefaultIP());
-    auto SVCI = dyn_cast<ConstantInt>(SV);
-    CHECK(SVCI);
-    auto SVInt = SVCI->getSExtValue();
-    CHECK(SVInt == 1 || SVInt == -1);
-    auto Last = IB->CreateAdd(First, IB->CreateMul(BT, SV));
-
-    switch (getUnroll()) {
-    case 1: {
-      // (First + Last) * (BT + 1) / 2
-      auto Prime = IB->CreateUDiv(
-          IB->CreateMul(IB->CreateAdd(First, Last), IB->CreateAdd(BT, One)),
-          createConstant(getCtx(), 2));
-      return InjectRepeat(Prime, AR.Wrapped,
-                          /*I am not sure if put 0 here is correct*/ 0, Val,
-                          Port);
-    }
-    case 2: {
-      Value *Range;
-      if (SVInt == -1) {
-        // FIXME: Support last != 0 case later.
-        auto F2 = IB->CreateAdd(First, IB->getInt64(2));
-        auto FF =
-            IB->CreateUDiv(IB->CreateMul(F2, F2), createConstant(getCtx(), 4));
-        Range = FF;
-      } else {
-        assert(false && "Not supported yet...");
-      }
-      Range = IB->CreateShl(Range, 1);
-      return InjectRepeat(Range, AR.Wrapped, /*Same as above*/ 0, Val, Port);
-    }
-    default: {
-      llvm_unreachable("Not supported vectorization width");
-    }
-    }
-    llvm_unreachable("Not supported yet...");
-    return nullptr;
-  }
-
-  llvm_unreachable("Unknown kind of AnalyzedRepeat's Repeat Type");
-}
-
-Instruction *DFGBase::InjectRepeat(Value *Prime, Value *Wrapper,
-                                   int64_t Stretch, Value *Val, int Port) {
-
-  auto IP = DefaultIP();
-  auto &IB = *Parent->Query->IBPtr;
-  IB.SetInsertPoint(IP);
-
-  auto ShiftedStretch = createConstant(getCtx(), Stretch << 3);
-  auto VectorizedStretch = IB.CreateSDiv(ShiftedStretch, UnrollConstant());
-  auto ActualStretch = IB.CreateShl(VectorizedStretch, 1);
-  (void)ActualStretch;
-
-  dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr,
-                                       Parent->Query->DSARegs);
-  if (Val == nullptr) {
-    auto Repeat = IB.CreateAdd(
-        IB.CreateSDiv(IB.CreateSub(Prime, IB.getInt64(1)), UnrollConstant()),
-        IB.getInt64(1));
-    DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
-    if (Stretch) {
-      DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, getUnroll());
-      DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, Stretch);
-    }
-    return DIE.res.back();
-  } else {
-    LLVM_DEBUG(dbgs() << "Inject Repeat: "; Val->dump();
-               dbgs() << "For port: " << Port);
-    assert(Port != -1);
-    DIE.SS_CONST(Port, Val,
-                 /*Times=*/ComputeRepeat(Prime, Wrapper, true, false),
-                 /*Const Type*/ Val->getType()->getScalarSizeInBits() / 8);
-    return DIE.res.back();
-  }
 }
 
 DFGBase *DFGBase::BelongOtherDFG(Instruction *I) {
@@ -580,13 +463,13 @@ void DFGFile::EraseOffloadedInstructions() {
           if (isa<PHINode>(I) || Found) {
             auto IB = Query->IBPtr;
             IB->SetInsertPoint(I->getNextNode());
-            dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
+            // dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
             break;
           }
           if (I == &I->getParent()->front()) {
             auto IB = Query->IBPtr;
             IB->SetInsertPoint(I);
-            dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
+            // dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
             break;
           }
         }

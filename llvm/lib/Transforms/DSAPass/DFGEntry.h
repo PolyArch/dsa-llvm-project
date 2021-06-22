@@ -387,6 +387,10 @@ struct StreamOutPort : OutputPort {
 
 struct IndMemPort : InputPort {
   MemPort *Index;
+  /*!
+   * \brief The output port that generates indices.
+   *        Do differentiate it with Index->SoftPortNum, that is the input port that feeds indices in.
+   */
   int IndexOutPort{-1};
   LoadInst *Load;
 

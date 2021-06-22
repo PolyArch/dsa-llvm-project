@@ -73,6 +73,11 @@ Value *CeilDiv(Value *A, Value *B, Instruction *InsertBefore) {
                                 InsertBefore);
 }
 
+Value *CeilDiv(Value *A, Value *B, IRBuilder<> *IB) {
+  auto One = IB->getIntN(A->getType()->getScalarSizeInBits(), 1);
+  return IB->CreateAdd(IB->CreateSDiv(IB->CreateSub(A, One), B), One);
+}
+
 void FindEquivPHIs(Instruction *Inst, std::set<Instruction *> &Equiv) {
   std::queue<Instruction *> Q;
   Q.push(Inst);

@@ -13,7 +13,7 @@
 #include "Pass.h"
 #include "Transformation.h"
 #include "Util.h"
-#include "dsa/rf.h"
+#include "dsa-ext/rf.h"
 
 using namespace llvm;
 

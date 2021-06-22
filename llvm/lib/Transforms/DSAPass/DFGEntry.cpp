@@ -776,10 +776,11 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       }
       assert(!Analyzed.Dimensions.empty());
       LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
-      dsa::inject::InjectLinearStream(
-          Parent->Parent->Query->IBPtr, Parent->Parent->Query->DSARegs,
-          MP->SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
-          MP->Load->getType()->getScalarSizeInBits() / 8);
+      // TODO(@were): Uncomment this.
+      // dsa::inject::InjectLinearStream(
+      //     Parent->Parent->Query->IBPtr, Parent->Parent->Query->DSARegs,
+      //     MP->SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
+      //     MP->Load->getType()->getScalarSizeInBits() / 8);
 
       /// {
       auto MinusOne = IB->CreateSub(RepeatTime, IB->getInt64(1));
@@ -788,9 +789,10 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       auto Recurrenced = IB->CreateMul(MinusOne, NumElements);
       /// }
 
-      dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
-      DIE.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, Recurrenced,
-                        MP->Load->getType()->getScalarSizeInBits() / 8);
+      // TODO(@were): Uncomment this.
+      // dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
+      // DIE.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, Recurrenced,
+      //                   MP->Load->getType()->getScalarSizeInBits() / 8);
 
       int II = 1;
       int Conc = -1;
@@ -821,10 +823,11 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
         oss << Conc * 8 / PortWidth();
         PM->Meta.set("conc", oss.str());
       }
-      dsa::inject::InjectLinearStream(
-          IB, Parent->Parent->Query->DSARegs, PM->SoftPortNum, Analyzed,
-          DMO_Write, DP_NoPadding, DMT_DMA,
-          PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8);
+      // TODO(@were): Uncomment this.
+      // dsa::inject::InjectLinearStream(
+      //     IB, Parent->Parent->Query->DSARegs, PM->SoftPortNum, Analyzed,
+      //     DMO_Write, DP_NoPadding, DMT_DMA,
+      //     PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8);
       PM->IntrinInjected = MP->IntrinInjected = true;
       return true;
     }
@@ -833,25 +836,25 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
   return false;
 }
 
-void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE,
-                            IRBuilder<> *IB, const SCEV *Idx,
-                            std::vector<Loop *> LoopNest,
-                            dsa::inject::RepeatInjector &RI,
-                            dsa::inject::LinearInjector &LI, int Port,
-                            int Unroll, int DType, MemoryOperation MO,
-                            Padding Padding, MemoryType MT) {
-  auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
-  std::vector<dsa::analysis::LinearInfo *> LoopLI;
-  for (int i = 0, N = LoopNest.size(); i < N; ++i) {
-    auto CurDim = dsa::analysis::AnalyzeIndexExpr(
-        SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
-    LoopLI.push_back(CurDim);
-  }
-  if (MO == MemoryOperation::DMO_Read) {
-    RI.Inject(IdxLI, LoopLI, Port, Unroll);
-  }
-  LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
-}
+// void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE,
+//                             IRBuilder<> *IB, const SCEV *Idx,
+//                             std::vector<Loop *> LoopNest,
+//                             dsa::inject::RepeatInjector &RI,
+//                             dsa::inject::LinearInjector &LI, int Port,
+//                             int Unroll, int DType, MemoryOperation MO,
+//                             Padding Padding, MemoryType MT) {
+//   auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
+//   std::vector<dsa::analysis::LinearInfo *> LoopLI;
+//   for (int i = 0, N = LoopNest.size(); i < N; ++i) {
+//     auto CurDim = dsa::analysis::AnalyzeIndexExpr(
+//         SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
+//     LoopLI.push_back(CurDim);
+//   }
+//   if (MO == MemoryOperation::DMO_Read) {
+//     RI.Inject(IdxLI, LoopLI, Port, Unroll);
+//   }
+//   LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
+// }
 
 AtomicPortMem::AtomicPortMem(DFGBase *Parent_, LoadInst *Index_,
                              StoreInst *Store_, int OpCode_, Instruction *Op_,

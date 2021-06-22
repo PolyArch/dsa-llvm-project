@@ -74,10 +74,6 @@ struct CodeGenContext {
       }
       return Val;
     }
-    // I actually do not like this.
-    // operator Value*&() {
-    //   return Val;
-    // }
   };
 
   CodeGenContext(IRBuilder<> *IB_, const RegisterFile &Regs_,
@@ -106,6 +102,10 @@ struct CodeGenContext {
   REG DIV(REG a, REG b) { return IB->CreateUDiv(a.value(IB), b.value(IB)); }
 
   REG SUB(REG a, REG b) { return IB->CreateSub(a.value(IB), b.value(IB)); }
+
+  REG SHL(REG a, REG b) { return IB->CreateShl(a.value(IB), b.value(IB)); }
+
+  REG MUL(REG a, REG b) { return IB->CreateMul(a.value(IB), b.value(IB)); }
 
   void INTRINSIC_DRI(std::string Mnemonic, REG &a, REG b, int c) {
     IntrinsicImpl(Mnemonic, "=r,r,i", {b.value(IB), IB->getInt64(c)},

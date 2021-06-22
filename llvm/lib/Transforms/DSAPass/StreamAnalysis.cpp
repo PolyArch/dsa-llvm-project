@@ -93,7 +93,7 @@ LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
     AppendZero();
   }
   if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
-    CHECK(i == (int)Loops.size()) << i << " != " << Loops.size();
+    CHECK(i == (int)Loops.size()) << i << " != " << Loops.size() << ": " << *Raw;
     LI->Coef.clear();
     LI->Coef.shrink_to_fit();
     LI->Base = Raw;
