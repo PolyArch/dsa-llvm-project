@@ -12,33 +12,14 @@
 
 using namespace llvm;
 
-const char *KindStr[] = {
-    "DFGEntry",
-
-    // Computation {
-    "ComputeStarts", "ComputeBody", "Duplicate", "Accumulator", "ComputeEnds",
-    // }
-
-    // Predicate {
-    "Predicate",
-    // }
-
-    // Port {
-    "PortStarts", "PortBase",
-
-    // InPort {
-    "InPortStarts", "InputPort", "MemPort", "IndMemPort", "CtrlMemPort",
-    "InputConst", "StreamInPort", "CtrlSignal", "InPortEnds",
-    // }
-
-    // OutPort {
-    "OutPortStarts", "OutputPort", "PortMem", "AtomicPortMem", "StreamOutPort",
-    "OutPortEnds",
-    // }
-
-    "PortEnds"
-    // }
+const char *KindStr[]= {
+#define MACRO(X) #X
+#include "./DFGKind.def"
+#undef MACRO
 };
+
+const int MemPort::PtrOperandIdx = 0;
+const int PortMem::PtrOperandIdx = 1;
 
 DFGEntry::DFGEntry(DFGBase *Parent_) : Parent(Parent_) {
   ID = Parent_->Entries.size();
@@ -695,167 +676,6 @@ bool IndMemPort::duplicated() {
   return false;
 }
 
-bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
-  if (!dsa::utils::ModuleContext().REC)
-    return false;
-
-  if (!IsInMajor())
-    return false;
-
-  // Wrappers
-  auto DFG = dyn_cast<DedicatedDFG>(Parent);
-
-  if (!DFG)
-    return false;
-
-  // Wrappers
-  auto MP = this;
-
-  LLVM_DEBUG(dbgs() << "Injecting update streams!\n");
-
-  for (auto &PM : DFG->EntryFilter<PortMem>()) {
-    if (!PM->IsInMajor() || PM->IntrinInjected)
-      continue;
-    auto Ptr0 = dyn_cast<Instruction>(MP->Load->getPointerOperand());
-    auto Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
-    LLVM_DEBUG(MP->Load->dump(); PM->Store->dump());
-    if (Ptr0 == Ptr1) {
-      LLVM_DEBUG(dbgs() << "A stream update detected!\n");
-      auto Analyzed = DFG->AnalyzeDataStream(
-          Ptr0,
-          MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
-      /* This portion of code is deprecated. I guess this is because LLVM's SCEV
-       * behaviour changed. for (int i = 0; i < n; ++i) for (int j = 0; j < m
-       * ++j)
-       *      // use a[j];
-       * i's n trip count used to be put in outer repeat.
-       * After adopting new version of LLVM, it seems to be a zero-step AddRecur
-       * now.
-       *
-       * if (!Analyzed.OuterRepeat) {
-       *   LLVM_DEBUG(dbgs() << "No outer repeat, skip!\n");
-       *   continue;
-       * }
-       * if (isOne(Analyzed.OuterRepeat)) {
-       *   LLVM_DEBUG(dbgs() << "One time update, skip!\n");
-       *   continue;
-       * }
-       */
-      if (Analyzed.Dimensions.size() == 1) {
-        LLVM_DEBUG(dbgs() << "One time update, skip!\n");
-        continue;
-      }
-      bool StrideZero = true;
-      for (size_t i = 0; i < Analyzed.Dimensions.size() - 1; ++i) {
-        if (auto Step =
-                dyn_cast<ConstantInt>(std::get<0>(Analyzed.Dimensions[i]))) {
-          if (Step->getSExtValue() != 0) {
-            StrideZero = false;
-            break;
-          }
-        }
-        if (int Stretch = std::get<2>(Analyzed.Dimensions[i])) {
-          LLVM_DEBUG(dbgs() << "Stretched repeat, skip!\n");
-          StrideZero = false;
-          break;
-        }
-      }
-      if (!StrideZero) {
-        LLVM_DEBUG(dbgs() << "No outer repeat, skip!\n");
-        continue;
-      }
-      if (Analyzed.AR.Prime) {
-        LLVM_DEBUG(dbgs() << "Isn't it an accumulation?!\n");
-        continue;
-      }
-      Value *RepeatTime = IB->getInt64(1);
-      while (Analyzed.Dimensions.size() != 1) {
-        auto TripCnt = std::get<1>(Analyzed.Dimensions.front());
-        RepeatTime = IB->CreateMul(RepeatTime, TripCnt);
-        Analyzed.Dimensions.erase(Analyzed.Dimensions.begin());
-      }
-      assert(!Analyzed.Dimensions.empty());
-      LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
-      // TODO(@were): Uncomment this.
-      // dsa::inject::InjectLinearStream(
-      //     Parent->Parent->Query->IBPtr, Parent->Parent->Query->DSARegs,
-      //     MP->SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
-      //     MP->Load->getType()->getScalarSizeInBits() / 8);
-
-      /// {
-      auto MinusOne = IB->CreateSub(RepeatTime, IB->getInt64(1));
-      auto NumElements = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
-                                        IB->getInt64(PM->PortWidth() / 8));
-      auto Recurrenced = IB->CreateMul(MinusOne, NumElements);
-      /// }
-
-      // TODO(@were): Uncomment this.
-      // dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
-      // DIE.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, Recurrenced,
-      //                   MP->Load->getType()->getScalarSizeInBits() / 8);
-
-      int II = 1;
-      int Conc = -1;
-      if (auto CI =
-              dyn_cast<ConstantInt>(std::get<1>(Analyzed.Dimensions.back()))) {
-        auto CII = CI->getZExtValue();
-        int CanHide = CII * 8 / PortWidth();
-        if (PM->Latency - CanHide > 0) {
-          II = PM->Latency - CanHide;
-          LLVM_DEBUG(dbgs() << "Recur II: " << II << "\n");
-        } else {
-          II = 1;
-          errs() << "[Warning] To hide the latency " << PM->Latency << ", "
-                 << CII * 8 / PortWidth() << " elements are active\n";
-          errs() << "This requires a " << CanHide - PM->Latency
-                 << "-deep FIFO buffer\n";
-        }
-        Conc = CII;
-      } else {
-        errs() << "[Warning] To hide the latency " << PM->Latency
-               << ", make sure your variable recur distance will not overwhlem "
-                  "the FIFO buffer!";
-      }
-      PM->Meta.set("dest", "localport");
-      PM->Meta.set("dest", MP->Name());
-      {
-        std::ostringstream oss;
-        oss << Conc * 8 / PortWidth();
-        PM->Meta.set("conc", oss.str());
-      }
-      // TODO(@were): Uncomment this.
-      // dsa::inject::InjectLinearStream(
-      //     IB, Parent->Parent->Query->DSARegs, PM->SoftPortNum, Analyzed,
-      //     DMO_Write, DP_NoPadding, DMT_DMA,
-      //     PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8);
-      PM->IntrinInjected = MP->IntrinInjected = true;
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE,
-//                             IRBuilder<> *IB, const SCEV *Idx,
-//                             std::vector<Loop *> LoopNest,
-//                             dsa::inject::RepeatInjector &RI,
-//                             dsa::inject::LinearInjector &LI, int Port,
-//                             int Unroll, int DType, MemoryOperation MO,
-//                             Padding Padding, MemoryType MT) {
-//   auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
-//   std::vector<dsa::analysis::LinearInfo *> LoopLI;
-//   for (int i = 0, N = LoopNest.size(); i < N; ++i) {
-//     auto CurDim = dsa::analysis::AnalyzeIndexExpr(
-//         SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
-//     LoopLI.push_back(CurDim);
-//   }
-//   if (MO == MemoryOperation::DMO_Read) {
-//     RI.Inject(IdxLI, LoopLI, Port, Unroll);
-//   }
-//   LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
-// }
-
 AtomicPortMem::AtomicPortMem(DFGBase *Parent_, LoadInst *Index_,
                              StoreInst *Store_, int OpCode_, Instruction *Op_,
                              Value *Operand_)
@@ -887,10 +707,6 @@ std::vector<Instruction *> AtomicPortMem::UnderlyingInsts() {
   return {Index->Load, Store};
 }
 
-void AtomicPortMem::EmitOutPort(std::ostringstream &os) {
-  // TODO: Should I just migrate EmitAtomic here?
-}
-
 int PortBase::VectorizeFactor() {
   return ShouldUnroll() ? Parent->getUnroll() : 1;
 }
@@ -905,6 +721,7 @@ VISIT_IMPL(PortBase)
 VISIT_IMPL(InputPort)
 VISIT_IMPL(CtrlMemPort)
 VISIT_IMPL(MemPort)
+VISIT_IMPL(CoalescedMemPort)
 VISIT_IMPL(StreamInPort)
 VISIT_IMPL(CtrlSignal)
 VISIT_IMPL(InputConst)
@@ -918,50 +735,29 @@ VISIT_IMPL(AtomicPortMem)
 namespace dsa {
 
 void DFGEntryVisitor::Visit(DFGEntry *Node) {}
-void DFGEntryVisitor::Visit(ComputeBody *Node) {
-  Visit(static_cast<DFGEntry *>(Node));
-}
-void DFGEntryVisitor::Visit(Predicate *Node) {
-  Visit(static_cast<DFGEntry *>(Node));
-}
-void DFGEntryVisitor::Visit(Accumulator *Node) {
-  Visit(static_cast<ComputeBody *>(Node));
-}
-void DFGEntryVisitor::Visit(PortBase *Node) {
-  Visit(static_cast<DFGEntry *>(Node));
-}
-void DFGEntryVisitor::Visit(InputPort *Node) {
-  Visit(static_cast<PortBase *>(Node));
-}
-void DFGEntryVisitor::Visit(CtrlMemPort *Node) {
-  Visit(static_cast<InputPort *>(Node));
-}
-void DFGEntryVisitor::Visit(MemPort *Node) {
-  Visit(static_cast<InputPort *>(Node));
-}
-void DFGEntryVisitor::Visit(StreamInPort *Node) {
-  Visit(static_cast<InputPort *>(Node));
-}
-void DFGEntryVisitor::Visit(CtrlSignal *Node) {
-  Visit(static_cast<InputPort *>(Node));
-}
-void DFGEntryVisitor::Visit(InputConst *Node) {
-  Visit(static_cast<InputPort *>(Node));
-}
-void DFGEntryVisitor::Visit(OutputPort *Node) {
-  Visit(static_cast<PortBase *>(Node));
-}
-void DFGEntryVisitor::Visit(PortMem *Node) {
-  Visit(static_cast<OutputPort *>(Node));
-}
-void DFGEntryVisitor::Visit(StreamOutPort *Node) {
-  Visit(static_cast<OutputPort *>(Node));
-}
-void DFGEntryVisitor::Visit(IndMemPort *Node) {
-  Visit(static_cast<InputPort *>(Node));
-}
-void DFGEntryVisitor::Visit(AtomicPortMem *Node) {
-  Visit(static_cast<OutputPort *>(Node));
-}
+
+#define VISIT_IMPL(Ext, Super)             \
+  void DFGEntryVisitor::Visit(Ext *Node) { \
+    Visit(static_cast<Super *>(Node));     \
+  }
+
+VISIT_IMPL(ComputeBody, DFGEntry)
+VISIT_IMPL(Predicate, DFGEntry)
+VISIT_IMPL(Accumulator, ComputeBody)
+VISIT_IMPL(PortBase, DFGEntry)
+VISIT_IMPL(InputPort, PortBase)
+VISIT_IMPL(CtrlMemPort, InputPort)
+VISIT_IMPL(MemPort, InputPort)
+VISIT_IMPL(CoalescedMemPort, InputPort)
+VISIT_IMPL(StreamInPort, InputPort)
+VISIT_IMPL(CtrlSignal, InputPort)
+VISIT_IMPL(InputConst, InputPort)
+VISIT_IMPL(IndMemPort, InputPort)
+VISIT_IMPL(OutputPort, PortBase)
+VISIT_IMPL(PortMem, OutputPort)
+VISIT_IMPL(StreamOutPort, OutputPort)
+VISIT_IMPL(AtomicPortMem, OutputPort)
+
+#undef VISIT_IMPL
 
 } // namespace dsa

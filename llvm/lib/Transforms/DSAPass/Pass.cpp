@@ -81,20 +81,25 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto End = ScopePairs[i].second;
     DFGFile DF(Name, Start, End, this);
     dsa::analysis::ExtractDFGFromScope(DF, Start, End, DT, LI);
-    dsa::xform::EmitDFG(nullptr, &DF);
-    // dsa::xform::EmitDFG(&llvm::errs(), &DF);
+    std::vector<dsa::analysis::DFGLoopInfo> DLIs;
+    for (auto DFG : DF.DFGFilter<DFGBase>()) {
+      DLIs.emplace_back(dsa::analysis::AnalyzeDFGLoops(DFG, *SE));
+    }
+    auto CMIs = dsa::analysis::GatherMemoryCoalescing(DF, *SE, DLIs);
+    {
+      std::error_code EC;
+      llvm::raw_fd_ostream RFO(DF.getName(), EC);
+      dsa::xform::EmitDFG(RFO, &DF, CMIs);
+    }
     // If extraction only, we do not schedule and analyze.
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
     auto SBCONFIG = getenv("SBCONFIG");
     CHECK(SBCONFIG);
-    auto Cmd =
-        formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name)
-            .str();
+    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
     LLVM_DEBUG(DSA_INFO << Cmd);
-    CHECK(system(Cmd.c_str()) == 0)
-        << "Not successfully scheduled! Try another DFG!";
+    CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
     // TODO(@were): When making the DFG's of index expression is done, uncomment
     // these. auto Graphs = DFG.DFGFilter<DFGBase>();
     // std::vector<std::vector<int>> Ports(Graphs.size());
@@ -102,12 +107,12 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
     // }
     // DF.InspectSPADs();
-    auto CI = dsa::analysis::ExtractDFGPorts(Name, DF);
+    auto CI = dsa::analysis::ExtractDFGPorts(Name, DF, CMIs);
     dsa::xform::InjectConfiguration(CGC, CI, Start, End);
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    dsa::xform::InjectStreamIntrinsics(CGC, DF);
+    dsa::xform::InjectStreamIntrinsics(CGC, DF, CMIs);
     DF.EraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {

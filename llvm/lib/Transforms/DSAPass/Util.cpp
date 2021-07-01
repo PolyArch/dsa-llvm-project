@@ -171,6 +171,23 @@ ModuleFlags &ModuleContext() {
   return Instance;
 }
 
+
+int DSUGetSet(int Elem, std::vector<int> &DSU) {
+  if (DSU[Elem] == Elem) {
+    return Elem;
+  }
+  return DSU[Elem] = DSUGetSet(DSU[Elem], DSU);
+}
+
+std::vector<std::vector<int>> DSU2Sets(std::vector<int> &DSU) {
+  std::vector<std::vector<int>> res(DSU.size());
+  for (int i = 0; i < (int) DSU.size(); ++i) {
+    res[DSUGetSet(i, DSU)].push_back(i);
+  }
+  return res;
+}
+
+
 } // namespace utils
 } // namespace dsa
 

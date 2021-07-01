@@ -1,0 +1,42 @@
+MACRO(DFGEntry),
+
+// Computation {
+MACRO(ComputeStarts),
+MACRO(ComputeBody),
+MACRO(Duplicate),
+MACRO(Accumulator),
+MACRO(ComputeEnds),
+// }
+
+// Predicate {
+MACRO(Predicate),
+// }
+
+// Port {
+MACRO(PortStarts),
+MACRO(PortBase),
+
+// InPort {
+MACRO(InPortStarts),
+MACRO(InputPort),
+MACRO(MemPort),
+MACRO(CoalMemPort),
+MACRO(IndMemPort),
+MACRO(CtrlMemPort),
+MACRO(InputConst),
+MACRO(StreamInPort),
+MACRO(CtrlSignal),
+MACRO(InPortEnds),
+// }
+
+// OutPort {
+MACRO(OutPortStarts),
+MACRO(OutputPort),
+MACRO(PortMem),
+MACRO(CoalPortMem),
+MACRO(AtomicPortMem),
+MACRO(StreamOutPort),
+MACRO(OutPortEnds),
+// }
+MACRO(PortEnds),
+// }

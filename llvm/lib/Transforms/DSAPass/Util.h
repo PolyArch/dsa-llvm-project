@@ -95,6 +95,19 @@ struct StickyRegister {
   StickyRegister(Value *A, Value *R, Value *S) : Alloca(A), Reg(R), Sticky(S) {}
 };
 
+/*!
+ * \brief Disjoint union set.
+ * \param Elem The element to get the set to which it belongs.
+ * \param DSU The DSU data structure.
+ */
+int DSUGetSet(int Elem, std::vector<int> &DSU);
+
+/*!
+ * \brief Convert the DSU to explicitly a vector of sets.
+ * \param DSU The DSU to convert.
+ */
+std::vector<std::vector<int>> DSU2Sets(std::vector<int> &DSU);
+
 } // namespace utils
 
 using RegisterFile = std::vector<utils::StickyRegister>;

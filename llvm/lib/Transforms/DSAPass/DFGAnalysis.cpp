@@ -678,7 +678,7 @@ void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
   }
 }
 
-ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
+ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs) {
   std::ifstream ifs(FName + ".h");
   auto DFGs = DF.DFGFilter<DFGBase>();
 
@@ -744,6 +744,14 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
           CHECK(false) << "DSAPass port information gathering unreachable!";
         }
         // #define dfgx_size size
+      } else if (Token.find(PortPrefix + "ICluster") == 0 || Token.find(PortPrefix + "OCluster") == 0) {
+        Token = Token.substr(std::string(PortPrefix + "ICluster").size());
+        int X, Y, Port;
+        CHECK(sscanf(Token.c_str(), "_%d_%d_", &X, &Y) == 2);
+        iss >> Port;
+        CHECK(X >= 0 && X < (int) CMIs.size());
+        CHECK(Y >= 0 && Y < (int) CMIs[X].ClusterPortNum.size()) << Y;
+        CMIs[X].ClusterPortNum[Y] = Port;
       } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {
         iss >> ConfigSize;
       } else if (Token.find(PortPrefix + "indirect_") == 0) {
@@ -762,6 +770,8 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
           iss >> Port;
           IMP->IndexOutPort = Port;
         }
+      } else {
+        CHECK(false) << "Unrecognized token: " << Token;
       }
       // char dfgx_config[size] = "filename:dfgx.sched";
     } else if (Token == "char") {
@@ -805,6 +815,90 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
   DB->Accept(&DLA);
   return DLA.DLI;
 }
+
+
+int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, const DFGLoopInfo &DLI, bool Signed) {
+  auto A = AnalyzeIndexExpr(&SE, SA, DLI.LoopNest);
+  auto B = AnalyzeIndexExpr(&SE, SB, DLI.LoopNest);
+  bool SameDims = true;
+  CHECK(A->Coef.size() == B->Coef.size());
+  for (int j = 0; j < (int) A->Coef.size(); ++j) {
+    if (A->Coef[j]->Base != B->Coef[j]->Base) {
+      DSA_INFO << *SE.getEqualPredicate(A->Coef[j]->Base, B->Coef[j]->Base);
+      SameDims = false;
+    }
+  }
+  if (SameDims) {
+    if (auto Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(B->Base, SE.getNegativeSCEV(A->Base)))) {
+      auto Res = Offset->getAPInt().getSExtValue();
+      return Signed ? Res : abs(Res);
+    }
+  }
+  CHECK(!Signed) << "If signed, same access pattern should be garanteed!";
+  return -1;
+}
+
+
+std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLIs) {
+  auto DFGs = DF.DFGFilter<DFGBase>();
+  CHECK(DLIs.size() == DFGs.size());
+  std::vector<CoalMemoryInfo> Res;
+  for (int i = 0; i < (int) DFGs.size(); ++i) {
+    auto &Entries = DFGs[i]->Entries;
+    auto &DLI = DLIs[i];
+    std::vector<int> DSU(Entries.size());
+    for (int j = 0; j < (int) DSU.size(); ++j) {
+      DSU[j] = j;
+    }
+    GatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLIs[i], DSU);
+    GatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLIs[i], DSU);
+    Res.emplace_back();
+    CoalMemoryInfo &Current = Res.back();
+    Current.Belong.resize(Entries.size(), -1);
+    std::map<int, int> DSU2Cluster;
+    for (int j = 0; j < (int) DSU.size(); ++j) {
+      int Set = utils::DSUGetSet(DSU[j], DSU);
+      if (!DSU2Cluster.count(Set)) {
+        DSU2Cluster[Set] = DSU2Cluster[Set] = DSU2Cluster.size();
+        Current.Clusters.emplace_back();
+        CHECK(Current.Clusters.size() == DSU2Cluster.size());
+      }
+      Current.Clusters[DSU2Cluster[Set]].emplace_back(j);
+      Current.ClusterPortNum.push_back(-1);
+      Current.Belong[j] = DSU2Cluster[Set];
+    }
+    for (int j = 0; j < (int) Current.Clusters.size(); ++j) {
+      auto &Cluster = Current.Clusters[j];
+      Cluster[0].Offset = 0;
+      struct PtrExtractor : DFGEntryVisitor {
+        void Visit(MemPort *MP) override {
+          Ptr = MP->Load->getPointerOperand();
+        }
+        void Visit(PortMem *PM) override {
+          Ptr = PM->Store->getPointerOperand();
+        }
+        Value *Ptr{nullptr};
+      };
+      auto FCompOffset = [&Entries, &Cluster, &SE, &DLI]() {
+        PtrExtractor Base;
+        Entries[Cluster[0].ID]->Accept(&Base);
+        for (int k = 1; k < (int) Cluster.size(); ++k) {
+          PtrExtractor PE;
+          Entries[Cluster[k].ID]->Accept(&PE);
+          Cluster[k].Offset = IndexPairOffset(SE.getSCEV(Base.Ptr), SE.getSCEV(PE.Ptr), SE, DLI, true);
+        }
+      };
+      auto FCmp = [] (const CoalMemoryInfo::CoalescedEntry &A, const CoalMemoryInfo::CoalescedEntry &B) {
+        return A.Offset < B.Offset;
+      };
+      FCompOffset();
+      std::sort(Cluster.begin(), Cluster.end(), FCmp);
+      FCompOffset();
+    }
+  }
+  return Res;
+}
+
 
 } // namespace analysis
 } // namespace dsa

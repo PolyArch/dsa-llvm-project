@@ -21,48 +21,12 @@ struct DFGEntryVisitor;
 }
 
 enum EntryKind {
-  kDFGEntry,
-
-  // Computation {
-  kComputeStarts,
-  kComputeBody,
-  kDuplicate,
-  kAccumulator,
-  kComputeEnds,
-  // }
-
-  // Predicate {
-  kPredicate,
-  // }
-
-  // Port {
-  kPortStarts,
-  kPortBase,
-
-  // InPort {
-  kInPortStarts,
-  kInputPort,
-  kMemPort,
-  kIndMemPort,
-  kCtrlMemPort,
-  kInputConst,
-  kStreamInPort,
-  kCtrlSignal,
-  kInPortEnds,
-  // }
-
-  // OutPort {
-  kOutPortStarts,
-  kOutputPort,
-  kPortMem,
-  kAtomicPortMem,
-  kStreamOutPort,
-  kOutPortEnds,
-  // }
-
-  kPortEnds
-  // }
+#define MACRO(X) k##X
+#include "./DFGKind.def"
+#undef MACRO
 };
+
+extern const char *KindStr[];
 
 struct Predicate;
 
@@ -269,6 +233,8 @@ struct MemPort : InputPort {
   LoadInst *Load;
   MemPort(DFGBase *Parent_, LoadInst *Load_);
 
+  static const int PtrOperandIdx;
+
   bool ShouldUnroll() override;
   Instruction *UnderlyingInst() override;
   int FillMode();
@@ -278,8 +244,6 @@ struct MemPort : InputPort {
   virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kMemPort; }
-
-  bool InjectUpdateStream(IRBuilder<> *IB);
 };
 
 // The data to this port is from an output of certain DFG
@@ -361,6 +325,8 @@ struct PortMem : OutputPort {
   StoreInst *Store;
   PortMem(DFGBase *Parent_, StoreInst *Store_);
 
+  static const int PtrOperandIdx;
+
   Instruction *UnderlyingInst() override;
   /*!
    * \brief The entrance of the visitor pattern.
@@ -425,7 +391,6 @@ struct AtomicPortMem : OutputPort {
   Instruction *UnderlyingInst() override;
 
   std::vector<Instruction *> UnderlyingInsts() override;
-  void EmitOutPort(std::ostringstream &os);
   /*!
    * \brief The entrance of the visitor pattern.
    */
@@ -433,6 +398,25 @@ struct AtomicPortMem : OutputPort {
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kAtomicPortMem; }
 };
+
+struct CoalescedMemPort : InputPort {
+  std::vector<std::pair<int, MemPort*>> Operations;
+
+  std::vector<Instruction *> UnderlyingInsts() {
+    std::vector<Instruction *> res;
+    auto f = [this, &res] (std::pair<int, MemPort*> &elem) { res.push_back(elem.second->UnderlyingInst()); };
+    std::for_each(Operations.begin(), Operations.end(), f);
+    return res;
+  }
+
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
+
+  static bool classof(const DFGEntry *DE) { return DE->Kind == kCoalMemPort; }
+};
+
 
 namespace dsa {
 /*!
@@ -447,6 +431,7 @@ struct DFGEntryVisitor {
   virtual void Visit(InputPort *);
   virtual void Visit(CtrlMemPort *);
   virtual void Visit(MemPort *);
+  virtual void Visit(CoalescedMemPort *);
   virtual void Visit(StreamInPort *);
   virtual void Visit(CtrlSignal *);
   virtual void Visit(InputConst *);

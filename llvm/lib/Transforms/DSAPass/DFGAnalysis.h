@@ -7,6 +7,8 @@
 namespace dsa {
 namespace analysis {
 
+struct CoalMemoryInfo;
+
 /*!
  * \brief Gather all the pairs of dsa.config.start/end
  * \param F The function to be analyzed.
@@ -39,8 +41,9 @@ struct ConfigInfo {
  * \brief Extract the port number from the generated schedule.
  * \param FName The emitted file to be analyzed.
  * \param Ports Write the result in the allocated vector buffer.
+ * \param CMIs The coalesced memory.
  */
-ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF);
+ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs);
 
 /*!
  * \brief Analyze DFG loops for code generation.
@@ -67,6 +70,90 @@ struct DFGLoopInfo {
  * \param SE The scalar evolution for analysis.
  */
 DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE);
+
+/*!
+ * \brief Analyze the offset between two memory operation indices.
+ * \param SA The first index.
+ * \param SB The second index.
+ * \param SE Scalar evolution for memory stream analysis.
+ * \param DLI The loop information associated to the DFG.
+ * \param Signed If result of analysis is signed.
+ */
+int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, const DFGLoopInfo &DLI, bool Signed);
+
+/*!
+ * \brief The implementation of coalescing memory operations.
+ * @tparam T The DFGEntry type to be gathered, either MemPort or PortMem.
+ * \param DB The DFG to be analyzed.
+ * \param SE Scalar evolution for memory stream analysis.
+ * \param DLI The loop information associated to the DFG.
+ * \param DSU The disjoint union to be updated by coalescing.
+ */
+template<typename T>
+void GatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopInfo& DLI, std::vector<int> &DSU) {
+  bool Iterative = true;
+  while (Iterative) {
+    Iterative = false;
+    auto DLI = dsa::analysis::AnalyzeDFGLoops(DB, SE);
+    for (int i = 0, n = DB->Entries.size(); i < n; ++i) {
+      if (auto Node1 = dyn_cast<T>(DB->Entries[i])) {
+        for (int j = i + 1; j < n; ++j) {
+          if (auto Node2 = dyn_cast<T>(DB->Entries[j])) {
+            auto PtrA = Node1->UnderlyingInst()->getOperand(T::PtrOperandIdx);
+            auto PtrB = Node2->UnderlyingInst()->getOperand(T::PtrOperandIdx);
+            if (PtrA->getType() != PtrB->getType()) {
+              continue;
+            }
+            auto Offset = IndexPairOffset(SE.getSCEV(PtrA), SE.getSCEV(PtrB), SE, DLI, false);
+            if (Offset != -1 && Offset <= 64) {
+              if (utils::DSUGetSet(i, DSU) != utils::DSUGetSet(j, DSU)) {
+                DSU[utils::DSUGetSet(i, DSU)] = utils::DSUGetSet(j, DSU);
+                Iterative = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+struct CoalMemoryInfo {
+  /*!
+   * \brief Which set of memory coalescing this memory operation belongs to.
+   */
+  std::vector<int> Belong;
+
+  struct CoalescedEntry {
+    /*!
+     * \brief The ID of the DFGEntry.
+     */
+    int ID;
+    /*!
+     * \brief The offset relative to the first element of the cluster.
+     */
+    int Offset{INT_MIN};
+
+    CoalescedEntry(int ID_) : ID(ID_) {}
+  };
+  /*!
+   * \brief Each vector is a cluster of coalesced memory.
+   */
+  std::vector<std::vector<CoalescedEntry>> Clusters;
+  /*!
+   * \brief The port number of each coalesced port.
+   */
+  std::vector<int> ClusterPortNum;
+};
+
+/*!
+ * \brief
+ * \param DF 
+ * \param SE 
+ * \param DLI 
+ */
+std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLI);
 
 } // namespace analysis
 } // namespace dsa
