@@ -771,16 +771,13 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     CHECK(0 <= Dim && Dim <= 3) << Dim;
     auto Start = SEE.expandCodeFor(LI->Base);
     int i = LI->PatialInvariant();
-    DSA_INFO << *Start;
     auto CoalesceStrideAndWord = [IB, DType, MaxOffset] (Value *&Stride1D, Value *&N1D) {
       if (auto CI = dyn_cast<ConstantInt>(Stride1D)) {
         int Multiplier = (MaxOffset / DType) + 1;
-        DSA_INFO << *N1D << " " << *Stride1D;
         if ((CI->getSExtValue() / DType) == Multiplier) {
           Stride1D = IB->getInt64(DType);
           N1D = IB->CreateMul(N1D, IB->getInt64(Multiplier));
         }
-        DSA_INFO << *N1D << " " << *Stride1D;
       }
     };
     switch (Dim) {
@@ -1051,7 +1048,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       int Belong = CMI.Belong[PM->ID];
       int MaxOffset = CMI.Clusters[Belong].back().Offset;
       int ID = CMI.Clusters[Belong].front().ID;
-      auto PM0 = dyn_cast<MemPort>(DFG->Entries[ID]);
+      auto PM0 = dyn_cast<PortMem>(DFG->Entries[ID]);
       int Port = CMI.Clusters[Belong].size() == 1 ? PM0->SoftPortNum : CMI.ClusterPortNum[Belong];
 
       CGC.IB->SetInsertPoint(DFG->DefaultIP());
