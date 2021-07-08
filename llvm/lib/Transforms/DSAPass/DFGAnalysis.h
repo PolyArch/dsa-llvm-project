@@ -17,6 +17,31 @@ std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
 GatherConfigScope(Function &F);
 
 /*!
+ * \brief The information of the extract scrathpads.
+ */
+struct SpadInfo {
+  /*! \brief Offset The begin of arrays. */
+  std::map<AllocaInst*, int> Offset;
+  /*! \brief The total bytes occupied on SPAD. */
+  int Total;
+
+  /*!
+   * \brief If the given pointer is on scratchpad.
+   * \param Val The pointer to be inspected.
+   */
+  bool isSpad(Value *Val);
+
+  SpadInfo(std::map<AllocaInst*, int> &O, int T) : Offset(O), Total(T) {}
+};
+
+/*!
+ * \brief Gather the the scratchpad local variables.
+ * \param Start The starting scope of DFG.
+ * \param Start The end scope of DFG.
+ */
+SpadInfo ExtractSpadFromScope(IntrinsicInst *Start, IntrinsicInst *End);
+
+/*!
  * \brief Extract dataflow graphs from the given scope
  * \param Start The start instrinsic annotates the scope
  * \param End The end intrinsic annotates the scope
@@ -95,9 +120,9 @@ void GatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopI
   while (Iterative) {
     Iterative = false;
     auto DLI = dsa::analysis::AnalyzeDFGLoops(DB, SE);
-    for (int i = 0, n = DB->Entries.size(); i < n; ++i) {
+    for (int i = 0, n = DB->Entries.size(); i < n; ++i) { // NOLINT
       if (auto Node1 = dyn_cast<T>(DB->Entries[i])) {
-        for (int j = i + 1; j < n; ++j) {
+        for (int j = i + 1; j < n; ++j) { // NOLINT
           if (auto Node2 = dyn_cast<T>(DB->Entries[j])) {
             auto PtrA = Node1->UnderlyingInst()->getOperand(T::PtrOperandIdx);
             auto PtrB = Node2->UnderlyingInst()->getOperand(T::PtrOperandIdx);

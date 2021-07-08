@@ -420,7 +420,7 @@ void CodeGenFunction::EmitSSCapturedRegion(const CompoundStmt &S,
 
   };
 
-  auto Start = Builder.CreateCall(ScopeIntrin[0][Kind], {});
+  auto *Start = Builder.CreateCall(ScopeIntrin[0][Kind], {});
   EmitCompoundStmtWithoutScope(S);
   Builder.CreateCall(ScopeIntrin[1][Kind], {Start});
 }

@@ -39,16 +39,16 @@ bool StreamSpecialize::runOnModule(Module &M) {
   if (!dsa::utils::ModuleContext().EXTRACT) {
     llvm::PassManagerBuilder PMB;
     PMB.OptLevel = 3;
-    llvm::legacy::FunctionPassManager fpass(&M);
-    llvm::legacy::PassManager mpass;
-    PMB.populateFunctionPassManager(fpass);
-    PMB.populateModulePassManager(mpass);
+    llvm::legacy::FunctionPassManager Fpass(&M);
+    llvm::legacy::PassManager Mpass;
+    PMB.populateFunctionPassManager(Fpass);
+    PMB.populateModulePassManager(Mpass);
     PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
     for (auto &F : M) {
       runOnFunction(F);
     }
-    fpass.doFinalization();
-    mpass.run(M);
+    Fpass.doFinalization();
+    Mpass.run(M);
   }
 
   return false;
@@ -75,14 +75,16 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   LLVM_DEBUG(DSA_INFO << "Transforming " << F.getName() << "\n");
   SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
   dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE);
-  for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
-    std::string Name = F.getName().str() + "_dfg_" + std::to_string(i) + ".dfg";
-    auto Start = ScopePairs[i].first;
-    auto End = ScopePairs[i].second;
+  for (int I = 0, N = ScopePairs.size(); I < N; ++I) {
+    std::string Name = F.getName().str() + "_dfg_" + std::to_string(I) + ".dfg";
+    auto *Start = ScopePairs[I].first;
+    auto *End = ScopePairs[I].second;
     DFGFile DF(Name, Start, End, this);
     dsa::analysis::ExtractDFGFromScope(DF, Start, End, DT, LI);
+    auto SI = dsa::analysis::ExtractSpadFromScope(Start, End);
+
     std::vector<dsa::analysis::DFGLoopInfo> DLIs;
-    for (auto DFG : DF.DFGFilter<DFGBase>()) {
+    for (auto *DFG : DF.DFGFilter<DFGBase>()) {
       DLIs.emplace_back(dsa::analysis::AnalyzeDFGLoops(DFG, *SE));
     }
     auto CMIs = dsa::analysis::GatherMemoryCoalescing(DF, *SE, DLIs);
@@ -95,9 +97,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    auto SBCONFIG = getenv("SBCONFIG");
+    auto *SBCONFIG = getenv("SBCONFIG");
     CHECK(SBCONFIG);
-    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
+    auto Cmd = formatv("ss_sched --dummy {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
     LLVM_DEBUG(DSA_INFO << Cmd);
     CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
     // TODO(@were): When making the DFG's of index expression is done, uncomment
@@ -112,7 +114,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    dsa::xform::InjectStreamIntrinsics(CGC, DF, CMIs);
+    dsa::xform::InjectStreamIntrinsics(CGC, DF, CMIs, SI);
     DF.EraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {

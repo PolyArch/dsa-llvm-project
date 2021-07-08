@@ -13,7 +13,7 @@ namespace analysis {
 
 LinearInfo *LinearInfo::LoopInvariant(ScalarEvolution *SE, int N,
                                       const SCEV *Base) {
-  auto LI = new LinearInfo();
+  auto *LI = new LinearInfo();
   LI->Base = Base;
   return LI;
 }
@@ -22,7 +22,7 @@ const uint64_t *LinearInfo::ConstInt() const {
   if (!Invariant()) {
     return nullptr;
   }
-  auto SC = dyn_cast<SCEVConstant>(Invariant());
+  const auto *SC = dyn_cast<SCEVConstant>(Invariant());
   if (!SC) {
     return nullptr;
   }
@@ -42,9 +42,9 @@ std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
     CHECK(Loops.empty() || Loops.size() == Coef.size())
         << Loops.size() << " ? " << Coef.size();
     RSO << "(";
-    for (int i = 0, N = Coef.size(); i < N; ++i) {
+    for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
       if (!Loops.empty()) {
-        if (auto IndVar = Loops[i]->getCanonicalInductionVariable()) {
+        if (auto *IndVar = Loops[i]->getCanonicalInductionVariable()) {
           if (IndVar->hasName()) {
             RSO << IndVar->getName();
           } else {
@@ -67,8 +67,8 @@ std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
 }
 
 int LinearInfo::PatialInvariant() const {
-  for (int i = 0, N = Coef.size(); i < N; ++i) {
-    auto CI = Coef[i]->ConstInt();
+  for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
+    const auto *CI = Coef[i]->ConstInt();
     if (CI && *CI == 0) {
       continue;
     }
@@ -80,9 +80,9 @@ int LinearInfo::PatialInvariant() const {
 LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
                              const std::vector<Loop *> &Loops) {
   LinearInfo *LI = new LinearInfo();
-  int i = 0;
+  int i = 0; // NOLINT
   auto AppendZero = [SE, LI, &Loops]() {
-    auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
+    auto *Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
                                           SE->getConstant(APInt(64, 0)));
     LI->Coef.push_back(Coef);
   };
@@ -100,7 +100,7 @@ LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
     return LI;
   }
   for (int N = Loops.size(); i < N; ++i) {
-    if (auto SARE = dyn_cast<SCEVAddRecExpr>(Raw)) {
+    if (const auto *SARE = dyn_cast<SCEVAddRecExpr>(Raw)) {
       if (!Loops.back()->contains(SARE->getLoop())) {
         CHECK(SE->isLoopInvariant(Raw, Loops[i]))
             << "I do not know how to handle this yet.";
@@ -108,7 +108,7 @@ LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
         continue;
       }
       if (SARE->getLoop() != Loops[i]) {
-        auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
+        auto *Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
                                               SE->getConstant(APInt(64, 0)));
         LI->Coef.push_back(Coef);
         continue;
@@ -138,25 +138,27 @@ struct StreamAnalysisPass : public FunctionPass {
   DependenceInfo *DI{nullptr};
   std::vector<Loop *> Loops;
 
-  void AnalyzeLoopNest(const std::vector<Loop *> &Loops) {
-    auto L = Loops.front();
+  void AnalyzeLoopNest(const std::vector<Loop *> &Loops) { // NOLINT
+    auto *L = Loops.front();
     for (auto &BB : L->getBlocks()) {
       for (auto &I : *BB) {
-        if (auto Load = dyn_cast<LoadInst>(&I)) {
-          auto Index = Load->getPointerOperand();
+        if (auto *Load = dyn_cast<LoadInst>(&I)) {
+          auto *Index = Load->getPointerOperand();
           CHECK(SE->isSCEVable(Index->getType()));
-          auto LI = AnalyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
+          auto *LI = AnalyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
+          (void) LI;
           LLVM_DEBUG(DSA_INFO << LI->toString());
         }
       }
     }
-    for (auto L : Loops) {
-      auto LI = AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
+    for (auto *L : Loops) {
+      auto *LI = AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
+      (void) LI;
       LLVM_DEBUG(DSA_INFO << LI->toString());
     }
   }
 
-  void Dfs(Loop *L) {
+  void Dfs(Loop *L) { // NOLINT
     Loops.insert(Loops.begin(), L);
     if (L->empty()) {
       if (GetUnrollMetadata(L->getLoopID(), "llvm.loop.ss.dedicated")) {
@@ -172,7 +174,7 @@ struct StreamAnalysisPass : public FunctionPass {
         AnalyzeLoopNest(Slice);
       }
     } else {
-      for (auto SubLoop : *L) {
+      for (auto *SubLoop : *L) {
         Dfs(SubLoop);
       }
     }
@@ -183,7 +185,7 @@ struct StreamAnalysisPass : public FunctionPass {
     SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
     DI = &getAnalysis<DependenceAnalysisWrapperPass>().getDI();
-    for (auto L : *LI) {
+    for (auto *L : *LI) {
       Dfs(L);
     }
     return false;

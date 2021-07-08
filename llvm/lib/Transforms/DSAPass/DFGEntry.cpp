@@ -21,20 +21,20 @@ const char *KindStr[]= {
 const int MemPort::PtrOperandIdx = 0;
 const int PortMem::PtrOperandIdx = 1;
 
-DFGEntry::DFGEntry(DFGBase *Parent_) : Parent(Parent_) {
+DFGEntry::DFGEntry(DFGBase *Parent_) : Parent(Parent_) { // NOLINT
   ID = Parent_->Entries.size();
 }
 
-Predicate *DFGEntry::getPredicate(int *x) {
-  auto DT = Parent->Parent->Query->DT;
+Predicate *DFGEntry::getPredicate(int *X) {
+  auto *DT = Parent->Parent->Query->DT;
 
   if (!UnderlyingInst())
     return nullptr;
   // Sometimes, the CFG is too simple to have a immediate dom.
-  if (auto Inst = dyn_cast<Instruction>(UnderlyingInst())) {
+  if (auto *Inst = dyn_cast<Instruction>(UnderlyingInst())) {
     Predicate *Res = nullptr;
-    for (size_t i = 0; i < Inst->getNumOperands(); ++i) {
-      if (auto Entry = Parent->InThisDFG(Inst->getOperand(i))) {
+    for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
+      if (auto *Entry = Parent->InThisDFG(Inst->getOperand(i))) {
         if (Res == nullptr) {
           Res = Entry->getPredicate();
         } else {
@@ -44,10 +44,10 @@ Predicate *DFGEntry::getPredicate(int *x) {
         }
       }
     }
-    if (auto DomNode = DT->getNode(Inst->getParent())->getIDom()) {
+    if (auto *DomNode = DT->getNode(Inst->getParent())->getIDom()) {
       auto &LastInst = DomNode->getBlock()->back();
       bool FindDom = false;
-      for (auto Elem : Parent->getBlocks()) {
+      for (auto *Elem : Parent->getBlocks()) {
         if (Elem == DomNode->getBlock()) {
           FindDom = true;
           break;
@@ -55,9 +55,9 @@ Predicate *DFGEntry::getPredicate(int *x) {
       }
       if (!FindDom)
         return nullptr;
-      if (auto BI = dyn_cast<BranchInst>(&LastInst)) {
+      if (auto *BI = dyn_cast<BranchInst>(&LastInst)) {
         if (BI->isConditional()) {
-          auto RawRes = Parent->InThisDFG(BI->getCondition());
+          auto *RawRes = Parent->InThisDFG(BI->getCondition());
           if (!RawRes) {
             // I am not sure how to properly handle this condition...
             return nullptr;
@@ -76,21 +76,21 @@ Predicate *DFGEntry::getPredicate(int *x) {
 }
 
 int DFGEntry::getAbstainBit() {
-  if (auto Inst = UnderlyingInst()) {
-    auto DT = Parent->Parent->Query->DT;
-    auto CurrentBB = Inst->getParent();
+  if (auto *Inst = UnderlyingInst()) {
+    auto *DT = Parent->Parent->Query->DT;
+    auto *CurrentBB = Inst->getParent();
     Predicate *Pred = nullptr;
     int Res = 7;
     while (true) {
-      auto DomNode = DT->getNode(CurrentBB)->getIDom();
+      auto *DomNode = DT->getNode(CurrentBB)->getIDom();
       if (!DomNode)
         break;
       if (!Parent->Contains(DomNode->getBlock()))
         break;
-      auto DomBB = DomNode->getBlock();
-      auto BI = dyn_cast<BranchInst>(&DomBB->back());
+      auto *DomBB = DomNode->getBlock();
+      auto *BI = dyn_cast<BranchInst>(&DomBB->back());
       if (BI->isConditional()) {
-        auto Cond = BI->getCondition();
+        auto *Cond = BI->getCondition();
         if (Pred == nullptr) {
           Pred = dyn_cast<Predicate>(Parent->InThisDFG(Cond));
           assert(Pred);
@@ -116,13 +116,13 @@ std::string DFGEntry::Name(int Idx) {
   return formatv("sub{0}_v{1}_", Parent->ID, ID);
 }
 
-PortBase::PortBase(DFGBase *Parent_)
+PortBase::PortBase(DFGBase *Parent_) // NOLINT
     : DFGEntry(Parent_), SoftPortNum(-1), IntrinInjected(false) {
   Kind = kPortBase;
 }
 
-OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) {
-  auto Inst = dyn_cast<Instruction>(Value_);
+OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) { // NOLINT
+  auto *Inst = dyn_cast<Instruction>(Value_);
   assert(Inst);
 
   LLVM_DEBUG(Inst->dump());
@@ -152,44 +152,44 @@ OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) {
   Kind = kOutputPort;
 }
 
-PortMem::PortMem(DFGBase *Parent_, StoreInst *Store_)
+PortMem::PortMem(DFGBase *Parent_, StoreInst *Store_) // NOLINT
     : OutputPort(Parent_, Store_->getValueOperand()), Store(Store_) {
   Kind = kPortMem;
 }
 
-Accumulator::Accumulator(DFGBase *Parent_, Instruction *Operation_,
-                         CtrlSignal *Ctrl_)
+Accumulator::Accumulator(DFGBase *Parent_, Instruction *Operation_, // NOLINT
+                         CtrlSignal *Ctrl_) // NOLINT
     : ComputeBody(Parent_, Operation_), Ctrl(Ctrl_) {
   Kind = kAccumulator;
 }
 
-InputPort::InputPort(DFGBase *Parent_) : PortBase(Parent_) {
+InputPort::InputPort(DFGBase *Parent_) : PortBase(Parent_) { // NOLINT
   Kind = kInputPort;
 }
 
-MemPort::MemPort(DFGBase *Parent_, LoadInst *Load_)
+MemPort::MemPort(DFGBase *Parent_, LoadInst *Load_) // NOLINT
     : InputPort(Parent_), Load(Load_) {
   Kind = kMemPort;
 }
 
-ComputeBody::ComputeBody(DFGBase *Parent_, Instruction *Operation_)
+ComputeBody::ComputeBody(DFGBase *Parent_, Instruction *Operation_) // NOLINT
     : DFGEntry(Parent_), Operation(Operation_) {
   assert(CanBeAEntry(Operation_));
   Kind = kComputeBody;
 }
 
-CtrlSignal::CtrlSignal(DFGBase *Parent_) : InputPort(Parent_) {
+CtrlSignal::CtrlSignal(DFGBase *Parent_) : InputPort(Parent_) { // NOLINT
   Kind = kCtrlSignal;
 }
 
-CtrlMemPort::CtrlMemPort(DFGBase *Parent_, LoadInst *Load_, Value *Start_,
-                         Value *TripCnt_, Predicate *Pred_, int Mask_)
+CtrlMemPort::CtrlMemPort(DFGBase *Parent_, LoadInst *Load_, Value *Start_, // NOLINT
+                         Value *TripCnt_, Predicate *Pred_, int Mask_) // NOLINT
     : InputPort(Parent_), Load(Load_), Start(Start_), TripCnt(TripCnt_),
       Pred(Pred_), Mask(Mask_) {
   Kind = kCtrlMemPort;
 }
 
-Predicate *CtrlMemPort::getPredicate(int *x) { return Pred; }
+Predicate *CtrlMemPort::getPredicate(int *) { return Pred; }
 
 Instruction *CtrlMemPort::UnderlyingInst() { return Load; }
 
@@ -205,7 +205,7 @@ bool DFGEntry::IsInMajor() {
   if (!UnderlyingInst()) {
     return false;
   }
-  for (auto BB : Parent->getBlocks())
+  for (auto *BB : Parent->getBlocks())
     if (UnderlyingInst()->getParent() == BB)
       return true;
   return false;
@@ -218,7 +218,7 @@ Instruction *MemPort::UnderlyingInst() { return Load; }
 Instruction *PortMem::UnderlyingInst() { return Store; }
 
 std::vector<Instruction *> InputConst::UnderlyingInsts() {
-  if (auto Inst = dyn_cast<Instruction>(Val)) {
+  if (auto *Inst = dyn_cast<Instruction>(Val)) {
     return {Inst};
   }
   return {};
@@ -230,17 +230,17 @@ std::vector<Value *> InputConst::UnderlyingValues() { return {Val}; }
 
 Value *InputConst::UnderlyingValue() { return Val; }
 
-InputConst::InputConst(DFGBase *Parent_, Value *Val_)
+InputConst::InputConst(DFGBase *Parent_, Value *Val_) // NOLINT
     : InputPort(Parent_), Val(Val_) {
   Kind = kInputConst;
 }
 
-StreamInPort::StreamInPort(DFGBase *Parent_, Instruction *Inst)
+StreamInPort::StreamInPort(DFGBase *Parent_, Instruction *Inst) // NOLINT
     : InputPort(Parent_), DataFrom(Inst) {
   Kind = kStreamInPort;
 }
 
-StreamOutPort::StreamOutPort(DFGBase *Parent_, Instruction *Inst)
+StreamOutPort::StreamOutPort(DFGBase *Parent_, Instruction *Inst) // NOLINT
     : OutputPort(Parent_, Inst) {
   Kind = kStreamOutPort;
 }
@@ -266,14 +266,14 @@ StreamInPort *StreamOutPort::FindConsumer() {
 
 std::vector<OutputPort *> ComputeBody::GetOutPorts() {
   std::vector<OutputPort *> Res;
-  for (auto Elem : Parent->Entries) {
-    if (auto OP = dyn_cast<OutputPort>(Elem)) {
+  for (auto *Elem : Parent->Entries) {
+    if (auto *OP = dyn_cast<OutputPort>(Elem)) {
       std::queue<Value *> Q;
       std::set<Value *> Visited;
       Q.push(OP->Output);
       Visited.insert(OP->Output);
       while (!Q.empty()) {
-        auto Cur = Q.front();
+        auto *Cur = Q.front();
         Q.pop();
         if (Cur == UnderlyingInst()) {
           Res.push_back(OP);
@@ -302,9 +302,9 @@ bool DFGEntry::ShouldUnroll() {
 bool ComputeBody::ShouldUnroll() {
   if (!DFGEntry::ShouldUnroll())
     return false;
-  auto Inst = UnderlyingInst();
-  for (size_t i = 0; i < Inst->getNumOperands(); ++i) {
-    if (auto Entry = Parent->InThisDFG(Inst->getOperand(i))) {
+  auto *Inst = UnderlyingInst();
+  for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
+    if (auto *Entry = Parent->InThisDFG(Inst->getOperand(i))) {
       if (Entry->ShouldUnroll())
         return true;
     }
@@ -319,7 +319,7 @@ bool CtrlSignal::ShouldUnroll() { return false; }
 bool OutputPort::ShouldUnroll() {
   if (!DFGEntry::ShouldUnroll())
     return false;
-  auto OV = Parent->InThisDFG(Output);
+  auto *OV = Parent->InThisDFG(Output);
   CHECK(OV);
   return OV->ShouldUnroll();
 }
@@ -327,7 +327,7 @@ bool OutputPort::ShouldUnroll() {
 bool MemPort::ShouldUnroll() {
   if (!DFGEntry::ShouldUnroll())
     return false;
-  if (auto DD = dyn_cast<DedicatedDFG>(Parent))
+  if (auto *DD = dyn_cast<DedicatedDFG>(Parent))
     return !DD->InnerMost()->isLoopInvariant(Load->getPointerOperand());
   return false;
 }
@@ -335,15 +335,15 @@ bool MemPort::ShouldUnroll() {
 bool IndMemPort::ShouldUnroll() {
   if (!DFGEntry::ShouldUnroll())
     return false;
-  if (auto DD = dyn_cast<DedicatedDFG>(Parent))
+  if (auto *DD = dyn_cast<DedicatedDFG>(Parent))
     return !DD->InnerMost()->isLoopInvariant(Index->Load->getPointerOperand());
   return false;
 }
 
-bool HasOtherUser(InputPort *IP, Value *Val) {
-  for (auto User : Val->users()) {
-    if (auto Entry = IP->Parent->InThisDFG(User)) {
-      if (auto CB = dyn_cast<ComputeBody>(Entry)) {
+bool HasOtherUser(InputPort *IP, Value *Val) { // NOLINT
+  for (auto *User : Val->users()) {
+    if (auto *Entry = IP->Parent->InThisDFG(User)) {
+      if (auto *CB = dyn_cast<ComputeBody>(Entry)) {
         if (!CB->isAtomic())
           return true;
       }
@@ -360,37 +360,37 @@ int DFGEntry::Index() {
   return ID;
 }
 
-void DFGEntry::dump(std::ostringstream &os) {
-  os << "[" << (void *)this << "] " << KindStr[Kind] << " ("
+void DFGEntry::dump(std::ostringstream &OS) {
+  OS << "[" << (void *)this << "] " << KindStr[Kind] << " ("
      << (void *)getPredicate() << ")";
   if (UnderlyingInst()) {
-    std::string res;
-    raw_string_ostream oss(res);
-    oss << *UnderlyingInst();
-    os << oss.str();
+    std::string Res;
+    raw_string_ostream OSS(Res);
+    OSS << *UnderlyingInst();
+    OS << OSS.str();
   } else {
-    os << "\n";
+    OS << "\n";
   }
 }
 
 Value *Accumulator::NumValuesProduced() {
-  auto Inst = UnderlyingInst();
+  auto *Inst = UnderlyingInst();
   assert(IsInMajor());
-  for (size_t i = 0; i < Inst->getNumOperands(); ++i) {
-    if (auto Phi = dyn_cast<PHINode>(Inst->getOperand(i))) {
-      for (size_t j = 0; j < Phi->getNumIncomingValues(); ++j) {
-        auto IB = Phi->getIncomingBlock(j);
+  for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
+    if (auto *Phi = dyn_cast<PHINode>(Inst->getOperand(i))) {
+      for (size_t j = 0; j < Phi->getNumIncomingValues(); ++j) { // NOLINT
+        auto *IB = Phi->getIncomingBlock(j);
         bool Found = false;
-        for (auto BB : Parent->getBlocks()) {
+        for (auto *BB : Parent->getBlocks()) {
           if (BB == IB) {
             Found = true;
             break;
           }
         }
         if (!Found) {
-          auto DD = dyn_cast<DedicatedDFG>(Parent);
+          auto *DD = dyn_cast<DedicatedDFG>(Parent);
           assert(DD);
-          for (size_t k = 0; k < DD->LoopNest.size(); ++k) {
+          for (size_t k = 0; k < DD->LoopNest.size(); ++k) { // NOLINT
             if (DD->LoopNest[k]->getBlocksSet().count(IB)) {
               return DD->ProdTripCount(
                   k, DD->Preheader->getFirstNonPHI()->getNextNode());
@@ -408,7 +408,7 @@ Value *Accumulator::NumValuesProduced() {
 }
 
 int MemPort::FillMode() {
-  if (auto DD = dyn_cast<DedicatedDFG>(Parent)) {
+  if (auto *DD = dyn_cast<DedicatedDFG>(Parent)) {
     if (Parent->getUnroll() <= 1)
       return DP_NoPadding;
     return DD->ConsumedByAccumulator(this) ? DP_PostStrideZero
@@ -417,7 +417,7 @@ int MemPort::FillMode() {
   return DP_NoPadding;
 }
 
-IndMemPort::IndMemPort(DFGBase *Parent_, LoadInst *Index_, LoadInst *Load)
+IndMemPort::IndMemPort(DFGBase *Parent_, LoadInst *Index_, LoadInst *Load) // NOLINT
     : InputPort(Parent_), Load(Load) {
   Index = new MemPort(Parent, Index_);
   Kind = kIndMemPort;
@@ -425,15 +425,15 @@ IndMemPort::IndMemPort(DFGBase *Parent_, LoadInst *Index_, LoadInst *Load)
 
 Instruction *IndMemPort::UnderlyingInst() { return Load; }
 
-std::string getOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
+std::string getOperationStr(Instruction *Inst, bool isAcc, bool predicated) { // NOLINT
   std::string OpStr;
   int BitWidth = Inst->getType()->getScalarSizeInBits();
 
-  if (auto Cmp = dyn_cast<CmpInst>(Inst)) {
+  if (auto *Cmp = dyn_cast<CmpInst>(Inst)) {
     // TODO: Support floating point
     OpStr = "compare";
     BitWidth = Cmp->getOperand(0)->getType()->getScalarSizeInBits();
-  } else if (auto Call = dyn_cast<CallInst>(Inst)) {
+  } else if (auto *Call = dyn_cast<CallInst>(Inst)) {
     CHECK(Call);
     OpStr = Call->getCalledFunction()->getName().str();
   } else {
@@ -447,7 +447,7 @@ std::string getOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
     }
   }
 
-  for (int i = 0, e = OpStr[0] == 'f' ? 2 : 1; i < e; ++i) {
+  for (int i = 0, e = OpStr[0] == 'f' ? 2 : 1; i < e; ++i) { // NOLINT
     OpStr[i] -= 'a';
     OpStr[i] += 'A';
   }
@@ -455,33 +455,32 @@ std::string getOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
   return formatv("{0}{1}", OpStr, BitWidth);
 }
 
-std::string ValueToOperandText(Value *Val) {
+std::string ValueToOperandText(Value *Val) { // NOLINT
 
-  if (auto CI = dyn_cast<ConstantInt>(Val)) {
+  if (auto *CI = dyn_cast<ConstantInt>(Val)) {
     return formatv("{0}", CI->getValue().getSExtValue());
-  } else if (auto CFP = dyn_cast<ConstantFP>(Val)) {
-    // TODO: Support more data types
-    double FPV = CFP->getValueAPF().convertToDouble();
-    uint64_t *RI = reinterpret_cast<uint64_t *>(&FPV);
-    return formatv("{0}", *RI);
   }
-
-  CHECK(false) << "Cannot dump " << *Val;
-  return "";
+  auto *CFP = dyn_cast<ConstantFP>(Val);
+  CHECK(CFP);
+  // TODO: Support more data types
+  double FPV = CFP->getValueAPF().convertToDouble();
+  uint64_t *RI = reinterpret_cast<uint64_t *>(&FPV);
+  return formatv("{0}", *RI);
 }
 
 bool Predicate::addCond(Instruction *Inst) {
-  auto Cmp = dyn_cast<ICmpInst>(Inst);
+  auto *Cmp = dyn_cast<ICmpInst>(Inst);
   assert(Cmp);
 
   bool NonReverse = Cmp->getOperand(0) == Cond[0]->getOperand(0) &&
                     Cmp->getOperand(1) == Cond[0]->getOperand(1);
+  (void) NonReverse;
   bool Reverse = (Cmp->getOperand(1) == Cond[0]->getOperand(0) &&
                   Cmp->getOperand(0) == Cond[0]->getOperand(1));
   assert(NonReverse || Reverse);
 
-  for (size_t i = 0; i < Cond.size(); ++i) {
-    auto Elem = Cond[i];
+  for (size_t i = 0; i < Cond.size(); ++i) { // NOLINT
+    auto *Elem = Cond[i];
     if (Cmp == Elem) {
       LLVM_DEBUG(dbgs() << "Alread added! No further operation needed!");
       return Reversed[i];
@@ -495,7 +494,7 @@ bool Predicate::addCond(Instruction *Inst) {
 }
 
 int Predicate::Contains(Instruction *Inst) {
-  for (size_t i = 0; i < Cond.size(); ++i) {
+  for (size_t i = 0; i < Cond.size(); ++i) { // NOLINT
     if (Cond[i] == Inst)
       return i;
   }
@@ -505,7 +504,7 @@ int Predicate::Contains(Instruction *Inst) {
 int Predicate::ToCompareRes(Instruction *Inst, bool TF) {
   int Idx = Contains(Inst);
   assert(Idx != -1);
-  auto Cmp = dyn_cast<ICmpInst>(Inst);
+  auto *Cmp = dyn_cast<ICmpInst>(Inst);
   if (!Cmp)
     return -1;
   return PredicateToInt(Cmp->getPredicate(), TF, Reversed[Idx]);
@@ -516,7 +515,7 @@ struct ControlBit {
   Predicate *Pred{nullptr};
 
   void addControlledMemoryStream(int Idx, DFGEntry *DE) {
-    if (auto CMP = dyn_cast<CtrlMemPort>(DE)) {
+    if (auto *CMP = dyn_cast<CtrlMemPort>(DE)) {
       if (Pred == nullptr) {
         Pred = CMP->Pred;
       } else {
@@ -524,7 +523,7 @@ struct ControlBit {
                                     "more than one predication.");
       }
       assert(Pred);
-      for (int j = 0; j < 3; ++j) {
+      for (int j = 0; j < 3; ++j) { // NOLINT
         if (~CMP->Mask >> j & 1) {
           if (!SubCtrl[j].str().empty()) {
             SubCtrl[j] << "|";
@@ -536,7 +535,7 @@ struct ControlBit {
   }
 
   bool empty() {
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 3; ++i) // NOLINT
       if (!SubCtrl[i].str().empty())
         return false;
     return true;
@@ -544,7 +543,7 @@ struct ControlBit {
 
   std::string finalize() {
     std::ostringstream Ctrl;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 3; ++i) { // NOLINT
       if (!SubCtrl[i].str().empty()) {
         if (!Ctrl.str().empty())
           Ctrl << ", ";
@@ -554,8 +553,8 @@ struct ControlBit {
     return Ctrl.str();
   }
 
-  void updateAbstain(int x, bool isAcc) {
-    for (int i = 0; i < 3; ++i) {
+  void updateAbstain(int x, bool isAcc) { // NOLINT
+    for (int i = 0; i < 3; ++i) { // NOLINT
       if (x >> i & 1) {
         if (!SubCtrl[i].str().empty()) {
           SubCtrl[i] << "|";
@@ -572,52 +571,52 @@ struct ControlBit {
 };
 
 // TODO(@were): Do I need to support vectorized comparison?
-void Predicate::EmitCond(std::ostringstream &os) {
+void Predicate::EmitCond(std::ostringstream &OS) {
 
   if (!dsa::utils::ModuleContext().PRED) {
     return;
   }
 
   {
-    os << "# [Predication] Combination\n";
-    for (auto I : Cond) {
+    OS << "# [Predication] Combination\n";
+    for (auto *I : Cond) {
       std::string Tmp;
-      raw_string_ostream oss(Tmp);
-      I->print(oss);
-      os << "# " << Tmp << "\n";
+      raw_string_ostream OSS(Tmp);
+      I->print(OSS);
+      OS << "# " << Tmp << "\n";
     }
   }
 
   ControlBit CtrlBit;
-  os << Name(-1) << " = Compare"
+  OS << Name(-1) << " = Compare"
      << Cond[0]->getOperand(0)->getType()->getScalarSizeInBits() << "(";
-  for (size_t i = 0; i < Cond[0]->getNumOperands(); ++i) {
-    auto Val = Cond[0]->getOperand(i);
+  for (size_t i = 0; i < Cond[0]->getNumOperands(); ++i) { // NOLINT
+    auto *Val = Cond[0]->getOperand(i);
     if (i)
-      os << ", ";
-    if (auto EntryOp = Parent->InThisDFG(Val)) {
-      os << EntryOp->Name(-1);
+      OS << ", ";
+    if (auto *EntryOp = Parent->InThisDFG(Val)) {
+      OS << EntryOp->Name(-1);
       CtrlBit.addControlledMemoryStream(i, EntryOp);
-      if (auto CMP = dyn_cast<CtrlMemPort>(EntryOp))
+      if (auto *CMP = dyn_cast<CtrlMemPort>(EntryOp))
         CMP->ForPredicate = true;
     } else {
-      os << ValueToOperandText(Val);
+      OS << ValueToOperandText(Val);
     }
   }
 
   if (!CtrlBit.empty()) {
     if (CtrlBit.Pred == this)
-      os << ", self=";
+      OS << ", self=";
     else
-      os << ", ctrl=" << CtrlBit.Pred->Name(-1);
-    os << "{" << CtrlBit.finalize() << "}";
+      OS << ", ctrl=" << CtrlBit.Pred->Name(-1);
+    OS << "{" << CtrlBit.finalize() << "}";
   }
 
-  os << ")\n";
+  OS << ")\n";
 }
 
 AtomicPortMem *ComputeBody::isAtomic() {
-  for (auto Entry : Parent->EntryFilter<AtomicPortMem>()) {
+  for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {
     if (Entry->Op == UnderlyingInst()) {
       return Entry;
     }
@@ -625,18 +624,18 @@ AtomicPortMem *ComputeBody::isAtomic() {
   return nullptr;
 }
 
-void ComputeBody::EmitAtomic(std::ostringstream &os) {
+void ComputeBody::EmitAtomic(std::ostringstream &OS) {
   if (isImmediateAtomic()) {
-    os << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": "
+    OS << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": "
        << Name();
     if (ShouldUnroll())
-      os << "[" << Parent->getUnroll() << "]";
-    os << "\n";
+      OS << "[" << Parent->getUnroll() << "]";
+    OS << "\n";
   }
 }
 
 AtomicPortMem *ComputeBody::isImmediateAtomic() {
-  for (auto Entry : Parent->EntryFilter<AtomicPortMem>()) {
+  for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {
     if (Entry->OpCode != 3 && Entry->Operand == UnderlyingInst()) {
       return Entry;
     }
@@ -644,7 +643,7 @@ AtomicPortMem *ComputeBody::isImmediateAtomic() {
   return nullptr;
 }
 
-Predicate::Predicate(DFGBase *Parent_, Instruction *Cond_)
+Predicate::Predicate(DFGBase *Parent_, Instruction *Cond_) // NOLINT
     : DFGEntry(Parent_), Cond{Cond_}, Reversed{false} {
   Kind = kPredicate;
 }
@@ -653,7 +652,7 @@ bool Predicate::ShouldUnroll() { return false; }
 
 Instruction *Predicate::UnderlyingInst() { return Cond[0]; }
 
-int TBits(int Bits) {
+int TBits(int Bits) { // NOLINT
   switch (Bits) {
   case 64:
     return 0;
@@ -664,11 +663,14 @@ int TBits(int Bits) {
   case 8:
     return 3;
   }
-  assert(false);
+  CHECK(false);
+  return -1;
 }
 
+
+// If this IndMemPort is a source operand of atomic update, i.e. a[b[i]] ?= operand.
 bool IndMemPort::duplicated() {
-  for (auto Entry : Parent->EntryFilter<AtomicPortMem>()) {
+  for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {
     if (Index->UnderlyingInst() == Entry->Index->UnderlyingInst()) {
       return true;
     }
@@ -676,9 +678,9 @@ bool IndMemPort::duplicated() {
   return false;
 }
 
-AtomicPortMem::AtomicPortMem(DFGBase *Parent_, LoadInst *Index_,
-                             StoreInst *Store_, int OpCode_, Instruction *Op_,
-                             Value *Operand_)
+AtomicPortMem::AtomicPortMem(DFGBase *Parent_, LoadInst *Index_, // NOLINT
+                             StoreInst *Store_, int OpCode_, Instruction *Op_, // NOLINT
+                             Value *Operand_) // NOLINT
     : OutputPort(Parent_, Store_->getValueOperand()),
       Index(new MemPort(Parent_, Index_)), Store(Store_), OpCode(OpCode_),
       Op(Op_), Operand(Operand_) {
@@ -711,8 +713,7 @@ int PortBase::VectorizeFactor() {
   return ShouldUnroll() ? Parent->getUnroll() : 1;
 }
 
-#define VISIT_IMPL(TYPE)                                                       \
-  void TYPE::Accept(dsa::DFGEntryVisitor *V) { V->Visit(this); }
+#define VISIT_IMPL(TYPE) void TYPE::Accept(dsa::DFGEntryVisitor *V) { V->Visit(this); }
 VISIT_IMPL(DFGEntry)
 VISIT_IMPL(ComputeBody)
 VISIT_IMPL(Predicate)
