@@ -134,7 +134,7 @@ struct ComputeBody : DFGEntry {
   // If this instruction is immidiately consumed by an atomic operation.
   AtomicPortMem *isImmediateAtomic();
   // (base on the method above) If so, regard this as an output.
-  void EmitAtomic(std::ostringstream &os);
+  // void EmitAtomic(std::ostringstream &os);
 
   static bool classof(const DFGEntry *DE) {
     return DE->Kind > kComputeStarts && DE->Kind < kComputeEnds;

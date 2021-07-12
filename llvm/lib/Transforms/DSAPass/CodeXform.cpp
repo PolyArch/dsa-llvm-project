@@ -336,7 +336,7 @@ struct DFGPrinter : dsa::DFGVisitor {
 
     void Visit(ComputeBody *CB) override {
       // If this ComputeBody is handled by a atomic operation skip it!
-      if (auto *APM = CB->isAtomic()) {
+      if (CB->isAtomic()) {
         return;
       }
 
@@ -368,6 +368,10 @@ struct DFGPrinter : dsa::DFGVisitor {
             OS << ", ctrl=" << CtrlBit.Pred->Name(vec) << "{"
                << CtrlBit.finalize() << "}";
           }
+        }
+
+        if (auto *CI = dyn_cast<CmpInst>(CB->Operation)) {
+          OS << ", " << CI->getPredicate();
         }
 
         OS << ")\n";

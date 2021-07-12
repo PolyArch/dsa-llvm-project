@@ -3,6 +3,7 @@ MACRO(DFGEntry),
 // Computation {
 MACRO(ComputeStarts),
 MACRO(ComputeBody),
+MACRO(Selector),
 MACRO(Duplicate),
 MACRO(Accumulator),
 MACRO(ComputeEnds),

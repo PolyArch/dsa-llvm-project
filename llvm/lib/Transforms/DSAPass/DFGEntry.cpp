@@ -158,8 +158,7 @@ PortMem::PortMem(DFGBase *Parent_, StoreInst *Store_) // NOLINT
 }
 
 Accumulator::Accumulator(DFGBase *Parent_, Instruction *Operation_, // NOLINT
-                         CtrlSignal *Ctrl_) // NOLINT
-    : ComputeBody(Parent_, Operation_), Ctrl(Ctrl_) {
+                         CtrlSignal *Ctrl_) : ComputeBody(Parent_, Operation_), Ctrl(Ctrl_) { // NOLINT
   Kind = kAccumulator;
 }
 
@@ -592,8 +591,9 @@ void Predicate::EmitCond(std::ostringstream &OS) {
      << Cond[0]->getOperand(0)->getType()->getScalarSizeInBits() << "(";
   for (size_t i = 0; i < Cond[0]->getNumOperands(); ++i) { // NOLINT
     auto *Val = Cond[0]->getOperand(i);
-    if (i)
+    if (i) {
       OS << ", ";
+    }
     if (auto *EntryOp = Parent->InThisDFG(Val)) {
       OS << EntryOp->Name(-1);
       CtrlBit.addControlledMemoryStream(i, EntryOp);
@@ -624,15 +624,15 @@ AtomicPortMem *ComputeBody::isAtomic() {
   return nullptr;
 }
 
-void ComputeBody::EmitAtomic(std::ostringstream &OS) {
-  if (isImmediateAtomic()) {
-    OS << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": "
-       << Name();
-    if (ShouldUnroll())
-      OS << "[" << Parent->getUnroll() << "]";
-    OS << "\n";
-  }
-}
+// void ComputeBody::EmitAtomic(std::ostringstream &OS) {
+//   if (isImmediateAtomic()) {
+//     OS << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": "
+//        << Name();
+//     if (ShouldUnroll())
+//       OS << "[" << Parent->getUnroll() << "]";
+//     OS << "\n";
+//   }
+// }
 
 AtomicPortMem *ComputeBody::isImmediateAtomic() {
   for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {

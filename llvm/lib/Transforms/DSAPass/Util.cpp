@@ -5,9 +5,9 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
-#include "Util.h"
 #include "DFGEntry.h"
 #include "Transformation.h"
+#include "Util.h"
 
 #include <queue>
 #include <set>
@@ -19,9 +19,9 @@ CallInst *createAssembleCall(Type *Ty, StringRef OpStr, StringRef Operand,
   SmallVector<Type *, 0> ArgTypes;
   for (auto &Elem : Args)
     ArgTypes.push_back(Elem->getType());
-  auto FuncTy = FunctionType::get(Ty, ArgTypes, false);
-  auto IA = InlineAsm::get(FuncTy, OpStr, Operand, true);
-  auto Inst = CallInst::Create(IA, Args, None, "", Before);
+  auto *FuncTy = FunctionType::get(Ty, ArgTypes, false);
+  auto *IA = InlineAsm::get(FuncTy, OpStr, Operand, true);
+  auto *Inst = CallInst::Create(IA, Args, None, "", Before);
   Inst->setTailCall();
   return Inst;
 }
@@ -42,39 +42,39 @@ std::string funcNameToDFGName(const StringRef &Name) {
       .str();
 }
 
-Value *GetLoopTripCount(ScalarEvolution *SE, SCEVExpander *Expander, Loop *Loop,
+Value *GetLoopTripCount(ScalarEvolution *SE, SCEVExpander *Expander, Loop *Loop, // NOLINT
                         Instruction *InsertBefore) {
-  auto One = createConstant(Loop->getExitBlock()->getContext(), 1);
-  auto MinusOne = Expander->expandCodeFor(SE->getBackedgeTakenCount(Loop),
+  auto *One = createConstant(Loop->getExitBlock()->getContext(), 1);
+  auto *MinusOne = Expander->expandCodeFor(SE->getBackedgeTakenCount(Loop),
                                           nullptr, InsertBefore);
-  auto TripCount = BinaryOperator::Create(Instruction::Add, MinusOne, One,
+  auto *TripCount = BinaryOperator::Create(Instruction::Add, MinusOne, One,
                                           "trip.count", InsertBefore);
   return TripCount;
 }
 
 bool CanBeAEntry(Value *Val) {
-  auto Inst = dyn_cast<Instruction>(Val);
-  if (!Inst)
+  auto *Inst = dyn_cast<Instruction>(Val);
+  if (!Inst) {
     return false;
-  if (auto Call = dyn_cast<CallInst>(Inst)) {
-    return Call->getCalledFunction()->getName() == "sqrt";
-  } else {
-    return Inst->isBinaryOp();
   }
+  if (auto *Call = dyn_cast<CallInst>(Inst)) {
+    return Call->getCalledFunction()->getName() == "sqrt";
+  }
+  return Inst->isBinaryOp() || isa<CmpInst>(Inst) || isa<SelectInst>(Inst);
 }
 
 Value *CeilDiv(Value *A, Value *B, Instruction *InsertBefore) {
-  auto One = createConstant(A->getContext(), 1);
-  auto SubOne =
+  auto *One = createConstant(A->getContext(), 1);
+  auto *SubOne =
       BinaryOperator::Create(BinaryOperator::Sub, A, One, "", InsertBefore);
-  auto Div =
+  auto *Div =
       BinaryOperator::Create(BinaryOperator::SDiv, SubOne, B, "", InsertBefore);
   return BinaryOperator::Create(BinaryOperator::Add, Div, One, "",
                                 InsertBefore);
 }
 
 Value *CeilDiv(Value *A, Value *B, IRBuilder<> *IB) {
-  auto One = IB->getIntN(A->getType()->getScalarSizeInBits(), 1);
+  auto *One = IB->getIntN(A->getType()->getScalarSizeInBits(), 1);
   return IB->CreateAdd(IB->CreateSDiv(IB->CreateSub(A, One), B), One);
 }
 
@@ -83,9 +83,9 @@ void FindEquivPHIs(Instruction *Inst, std::set<Instruction *> &Equiv) {
   Q.push(Inst);
   Equiv.insert(Inst);
   while (!Q.empty()) {
-    if (auto PHI = dyn_cast<PHINode>(Q.front())) {
+    if (auto *PHI = dyn_cast<PHINode>(Q.front())) {
       for (auto &Elem : PHI->incoming_values()) {
-        auto Casted = dyn_cast<Instruction>(Elem);
+        auto *Casted = dyn_cast<Instruction>(Elem);
         if (!Casted)
           continue;
         if (Equiv.count(Casted))
@@ -94,8 +94,8 @@ void FindEquivPHIs(Instruction *Inst, std::set<Instruction *> &Equiv) {
         Equiv.insert(Casted);
       }
     }
-    for (auto User : Q.front()->users()) {
-      auto Phi = dyn_cast<PHINode>(User);
+    for (auto *User : Q.front()->users()) {
+      auto *Phi = dyn_cast<PHINode>(User);
       if (!Phi)
         continue;
       if (Equiv.count(Phi))
@@ -139,12 +139,12 @@ int PredicateToInt(ICmpInst::Predicate Pred, bool TF, bool Reverse) {
 }
 
 BasicBlock *FindLoopPrologue(Loop *L) {
-  auto Latch = L->getLoopLatch();
+  auto *Latch = L->getLoopLatch();
   assert(Latch);
-  auto BI = dyn_cast<BranchInst>(&Latch->back());
+  auto *BI = dyn_cast<BranchInst>(&Latch->back());
   assert(BI);
-  for (size_t i = 0; i < BI->getNumSuccessors(); ++i) {
-    auto DstBB = BI->getSuccessor(i);
+  for (int i = 0; i < (int) BI->getNumSuccessors(); ++i) { // NOLINT
+    auto *DstBB = BI->getSuccessor(i);
     LLVM_DEBUG(dbgs() << "Inject stream wait fence " << DstBB->getName()
                       << "\n");
     if (!L->getBlocksSet().count(DstBB)) {
@@ -157,7 +157,7 @@ BasicBlock *FindLoopPrologue(Loop *L) {
 bool isOne(Value *Val) {
   if (!Val)
     return false;
-  auto CI = dyn_cast<ConstantInt>(Val);
+  auto *CI = dyn_cast<ConstantInt>(Val);
   if (!CI)
     return false;
   return CI->getSExtValue() == 1;
@@ -180,18 +180,18 @@ int DSUGetSet(int Elem, std::vector<int> &DSU) {
 }
 
 std::vector<std::vector<int>> DSU2Sets(std::vector<int> &DSU) {
-  std::vector<std::vector<int>> res(DSU.size());
-  for (int i = 0; i < (int) DSU.size(); ++i) {
-    res[DSUGetSet(i, DSU)].push_back(i);
+  std::vector<std::vector<int>> Res(DSU.size());
+  for (int i = 0; i < (int) DSU.size(); ++i) { // NOLINT
+    Res[DSUGetSet(i, DSU)].push_back(i);
   }
-  return res;
+  return Res;
 }
 
 
 } // namespace utils
 } // namespace dsa
 
-raw_ostream &operator<<(raw_ostream &os, DFGEntry &DE) {
+raw_ostream &operator<<(raw_ostream &OS, DFGEntry &DE) {
 
   static const char *KindStr[] = {
       "DFGEntry",
@@ -221,16 +221,16 @@ raw_ostream &operator<<(raw_ostream &os, DFGEntry &DE) {
       // }
   };
 
-  os << "# [" << KindStr[(int) DE.Kind] << "]: DFG" << DE.Parent->ID << " Entry"
+  OS << "# [" << KindStr[(int) DE.Kind] << "]: DFG" << DE.Parent->ID << " Entry"
      << DE.ID << "\n";
-  int i = 0;
+  int i = 0; // NOLINT
   auto Insts = DE.UnderlyingInsts();
-  for (auto Elem : Insts) {
-    os << "# Inst";
+  for (auto *Elem : Insts) {
+    OS << "# Inst";
     if (Insts.size() != 1) {
-      os << i++;
+      OS << i++;
     }
-    os << ": " << *Elem << "\n";
+    OS << ": " << *Elem << "\n";
   }
-  return os;
+  return OS;
 }
