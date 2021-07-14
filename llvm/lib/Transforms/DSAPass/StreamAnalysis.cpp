@@ -146,15 +146,13 @@ struct StreamAnalysisPass : public FunctionPass {
           auto *Index = Load->getPointerOperand();
           CHECK(SE->isSCEVable(Index->getType()));
           auto *LI = AnalyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
-          (void) LI;
-          LLVM_DEBUG(DSA_INFO << LI->toString());
+          LOG(LOOP) << LI->toString();
         }
       }
     }
     for (auto *L : Loops) {
       auto *LI = AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
-      (void) LI;
-      LLVM_DEBUG(DSA_INFO << LI->toString());
+      LOG(LOOP) << LI->toString();
     }
   }
 

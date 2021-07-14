@@ -47,39 +47,6 @@ void DFGVisitor::Visit(TemporalDFG *Node) {
   Visit(static_cast<DFGBase *>(Node));
 }
 
-namespace inject {
-
-// std::stack<IRBuilder<> *> DSAIntrinsicEmitter::REG::IBStack;
-
-// MemoryType
-// InjectLinearStream(IRBuilder<> *IB,
-//                    const std::vector<dsa::utils::StickyRegister> &Regs,
-//                    int PortNum, const AnalyzedStream &Stream,
-//                    MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
-//   DSAIntrinsicEmitter DIE(IB, Regs);
-//   Value *Start = std::get<0>(Stream.Dimensions.back());
-//   Value *Bytes = std::get<1>(Stream.Dimensions.back());
-//   Value *DTyValue = IB->getInt64(DType);
-//   if (Stream.Dimensions.size() == 1) {
-//     DIE.INSTANTIATE_1D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue), PortNum,
-//                               PP, DSA_Access, MO, MT, DType, 0);
-//     return DMT_DMA;
-//   } else if (Stream.Dimensions.size() == 2) {
-//     Value *Stride = std::get<0>(Stream.Dimensions[0]);
-//     Value *N = std::get<1>(Stream.Dimensions[0]);
-//     int Stretch = std::get<2>(Stream.Dimensions[0]);
-//     DIE.INSTANTIATE_2D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue),
-//                               DIE.DIV(Stride, DTyValue),
-//                               IB->getInt64(Stretch / DType), N, PortNum, PP,
-//                               DSA_Access, MO, MT, DType, 0);
-//     return DMT_DMA;
-//   } else {
-//     llvm::errs() << Stream.Dimensions.size();
-//   }
-//   llvm_unreachable("Unsupported stream dimension");
-// }
-
-} // namespace inject
 } // namespace dsa
 
 const std::string &DFGFile::getName() { return FileName; }

@@ -707,31 +707,44 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
                      int Unroll) {
   auto *IB = CGC.IB;
   auto &SEE = CGC.SEE;
-  Value *Stretch = nullptr;
   Value *Repeat = IB->getInt64(1);
-  for (int i = 0; i < N; ++i) { // NOLINT
-    if (!Loops[i]->Coef.empty()) {
-      CHECK(i == 0)
-          << "Only the inner most dimension supports repeat stretch.";
-      for (int j = 0; j < N; ++j) { // NOLINT
-        if (j == 1) {
-          continue;
-        }
-        const auto *CI = Loops[i]->Coef[j]->ConstInt();
-        CHECK(CI && *CI == 0);
-      }
-      // FIXME(@were): Fix this for fixed point.
+  Value *Stretch = nullptr;
+
+  switch (N) {
+  case 1: {
+    if (!Loops[0]->Coef.empty()) {
       Stretch = SEE.expandCodeFor(Loops[0]->Coef[1]->Base);
+      Stretch = IB->CreateMul(Stretch, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
+      Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
     }
-    auto *Current = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Base), IB->getInt64(1));
-    if (i == 0 && Unroll != 1) {
-      Current = CeilDiv(Current, IB->getInt64(Unroll), IB);
-      if (Stretch) {
-        Stretch = IB->CreateMul(Stretch, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
-        Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
+    auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Loops[0]->Base), IB->getInt64(1));
+    Repeat = CeilDiv(Dim0, IB->getInt64(Unroll), IB);
+    break;
+  }
+  case 2: {
+    auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Loops[0]->Base), IB->getInt64(1));
+    auto *Dim1 = IB->CreateAdd(SEE.expandCodeFor(Loops[1]->Base), IB->getInt64(1));
+    CHECK(Loops[1]->Coef.empty());
+    if (!Loops[0]->Coef.empty()) {
+      if (Unroll == 1) {
+        // (Dim0 + Dim0 + (Dim1 - 1) * Stretch) * Dim1 / 2
+        Stretch = SEE.expandCodeFor(Loops[0]->Coef[1]->Base);
+        auto *Dim0x2 = IB->CreateAdd(Dim0, Dim0);
+        auto *Delta = IB->CreateMul(Stretch, IB->CreateSub(Dim1, IB->getInt64(1)));
+        auto *Last = IB->CreateAdd(Dim0x2, Delta);
+        Repeat = IB->CreateSDiv(IB->CreateMul(Last, Dim0), IB->getInt64(2));
+        Stretch = nullptr;
+        DSA_INFO << "Stretched 2-D Repeat: " << *Repeat;
+      } else if (Unroll == 2) {
+        CHECK(false) << "Support this later...";
       }
+    } else {
+      Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
     }
-    Repeat = IB->CreateMul(Repeat, Current);
+    break;
+  }
+  default:
+    CHECK(N == 0) << "TODO: Support N == " << N << " later";
   }
   return {Repeat, Stretch};
 }
@@ -763,6 +776,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     }
     CGC.SS_CONFIG_PORT(Port, DPF_PortRepeat, CGC.MUL(Repeat, 1 << DSA_REPEAT_DIGITAL_POINT));
     if (Stretch) {
+      DSA_INFO << "Stretch: " << *Stretch;
       CGC.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, Stretch);
     }
   };
@@ -772,12 +786,16 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
                                  MemoryOperation MO, Padding P, analysis::SpadInfo &SI, int DType) {
     auto *IB = CGC.IB;
     auto &SEE = CGC.SEE;
-    CHECK(Loops.size() == LI->Coef.size())
-        << Loops.size() << " != " << LI->Coef.size();
-    int Dim = Loops.size() - LI->PatialInvariant();
-    CHECK(0 <= Dim && Dim <= 3) << Dim;
     auto *Start = SEE.expandCodeFor(LI->Base);
     auto MT = SI.isSpad(Start) ? DMT_SPAD : DMT_DMA;
+    if (LI->Coef.empty()) {
+      CGC.INSTANTIATE_1D_STREAM(SEE.expandCodeFor(LI->Base), IB->getInt64(0),
+                                IB->getInt64(1), Port, P, DSA_Access, MO, MT,
+                                DType, 0);
+      return;
+    }
+    int Dim = Loops.size() - LI->PatialInvariant();
+    CHECK(0 <= Dim && Dim <= 3) << Dim;
     if (const auto *LII = LI->Invariant()) {
       CGC.INSTANTIATE_1D_STREAM(SEE.expandCodeFor(LII), IB->getInt64(0),
                                 IB->getInt64(1), Port, P, DSA_Access, MO, MT,
@@ -811,7 +829,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       break;
     }
     case 2: {
-      auto *N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1));
+      auto *N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Base), IB->getInt64(1));
       auto *Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
       CoalesceStrideAndWord(Stride1D, N1D);
       // TODO(@were): Make assumption check!
@@ -870,7 +888,6 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
         auto *Ptr0 = dyn_cast<Instruction>(MP->Load->getPointerOperand());
         auto *Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
         if (Ptr0 == Ptr1) {
-          DSA_INFO << "Rec: " << *MP->Load << " " << *PM->Store;
           const auto *SCEV = SE.getSCEV(Ptr0);
           auto *Analyzed = dsa::analysis::AnalyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
           // No repeat!
@@ -988,9 +1005,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       }
 
       CHECK(Together[0] == IMP);
-      DSA_INFO << "Prime port " << IMP;
       for (size_t i = 1; i < Together.size(); ++i) { // NOLINT
-        DSA_INFO << "Broadcast index to " << INDs[i];
         CGC.SS_CONFIG_PORT(INDs[i], DPF_PortBroadcast, true);
       }
 
@@ -1014,7 +1029,6 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
             Cur->IndexOutPort, Cur->Index->Load->getType()->getScalarSizeInBits() / 8,
             GEP->getOperand(0), Cur->Load->getType()->getScalarSizeInBits() / 8,
             Num, DMT_DMA, DMO_Read);
-        DSA_INFO << Cur->SoftPortNum << " <- " << Cur->IndexOutPort;
 
         // TODO: Support indirect read on the SPAD(?)
         Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)DMT_DMA]);
@@ -1046,8 +1060,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       const auto *SCEVIdx = CGC.SE.getSCEV(MP0->Load->getPointerOperand());
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
       InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
-                             DFG->getUnroll(), DType, DMO_Read, (Padding) MP->FillMode(),
-                             SI);
+                             DFG->getUnroll(), DType, DMO_Read, (Padding) MP->FillMode(), SI);
 
       for (auto &Elem : CMI.Clusters[Belong]) {
         auto *PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
@@ -1089,7 +1102,8 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       auto CR =
         InjectComputedRepeat(CGC, DLI.TripCount, DLI.TripCount.size(), IC->Parent->getUnroll());
       CHECK(!CR.second) << "Should not be stretched!";
-      CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first, IC->Val->getType()->getScalarSizeInBits() / 8);
+      CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first,
+                   IC->Val->getType()->getScalarSizeInBits() / 8);
       IC->IntrinInjected = true;
     }
 
