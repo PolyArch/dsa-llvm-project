@@ -134,7 +134,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         }
 
         std::set<Instruction *> Equiv;
-        LLVM_DEBUG(dbgs() << "Equiv of: ");
+        LLVM_DEBUG(DSA_INFO << "Equiv of: ");
         findEquivPhIs(Casted, Equiv);
 
         Value *TripCount = nullptr;
@@ -177,7 +177,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
             }
           }
           if (DD && Elem->getParent() == DD->InnerMost()->getLoopLatch()) {
-            LLVM_DEBUG(dbgs() << "Latch"; Elem->dump());
+            LLVM_DEBUG(DSA_INFO << "Latch"; Elem->dump());
             for (auto *User : Elem->users()) {
               auto *Cmp = dyn_cast<ICmpInst>(User);
               if (!Cmp)
@@ -189,7 +189,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
               for (size_t I = 0; I < Cmp->getNumOperands(); ++I) {
                 if (Cmp->getOperand(I) != Elem) {
                   TripCount = Cmp->getOperand(I);
-                  LLVM_DEBUG(dbgs() << "TripCount"; TripCount->dump());
+                  LLVM_DEBUG(DSA_INFO << "TripCount"; TripCount->dump());
                 }
               }
             }
@@ -214,21 +214,21 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
           for (size_t I = 0; I < Conditions.size(); ++I) {
             auto Cond = Conditions[I];
-            LLVM_DEBUG(dbgs() << "Moveforward: " << Cond.second << " ";
+            LLVM_DEBUG(DSA_INFO << "Moveforward: " << Cond.second << " ";
                        Cond.first->dump());
             int SubMask = PredicateToInt(Cond.first->getPredicate(),
                                          Cond.second, Reverse[I]);
             Mask |= SubMask;
           }
 
-          LLVM_DEBUG(dbgs() << "Forward mask: " << Mask << "\n");
+          LLVM_DEBUG(DSA_INFO << "Forward mask: " << Mask << "\n");
           // FIXME: GEP for not is good enough, but we need a better way to
           // figure out the start
           //        pointer later.
           return new CtrlMemPort(&DB, Load, GEP->getOperand(0), TripCount, Pred,
                                  Mask);
         }
-        LLVM_DEBUG(dbgs() << "\n");
+        LLVM_DEBUG(DSA_INFO << "\n");
         return nullptr;
       };
 
@@ -298,7 +298,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
   void inspectOperands(Instruction *Inst) {
     // TODO(@were): Make this a InstVisitor
     auto &DB = *DBPtr;
-    LLVM_DEBUG(dbgs() << "Analyze Entry: "; Inst->dump());
+    LLVM_DEBUG(DSA_INFO << "Analyze Entry: "; Inst->dump());
 
     bool IsAcc = false;
 
@@ -309,9 +309,9 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
     for (size_t I = 0; I < ToOffload->getNumOperands(); ++I) {
       auto *Operand = ToOffload->getOperand(I);
-      LLVM_DEBUG(dbgs() << "Operand: "; Operand->dump());
+      LLVM_DEBUG(DSA_INFO << "Operand: "; Operand->dump());
       if (DB.InThisDFG(Operand)) {
-        LLVM_DEBUG(dbgs() << "Already-in skip!\n");
+        LLVM_DEBUG(DSA_INFO << "Already-in skip!\n");
         continue;
       }
       if (auto *Phi = dyn_cast<PHINode>(Operand)) {
@@ -343,20 +343,20 @@ struct DFGEntryAnalyzer : DFGVisitor {
       } else if (auto *Load = dyn_cast<LoadInst>(Operand)) {
         DB.Entries.push_back(differentiateMemoryStream(Load));
       } else if (auto *Consumee = dyn_cast<Instruction>(Operand)) {
-        LLVM_DEBUG(dbgs() << "Not in this Nest: " << DB.Contains(Consumee)
+        LLVM_DEBUG(DSA_INFO << "Not in this Nest: " << DB.Contains(Consumee)
                           << "\n");
         if (!DB.Contains(Consumee)) {
           if (DB.BelongOtherDFG(Consumee)) {
             DB.Entries.push_back(new StreamInPort(&DB, Consumee));
-            LLVM_DEBUG(dbgs() << "Upstream:"; Consumee->dump());
+            LLVM_DEBUG(DSA_INFO << "Upstream:"; Consumee->dump());
           } else {
             DB.Entries.push_back(new InputConst(&DB, Consumee));
-            LLVM_DEBUG(dbgs() << "Outer loop invariant:"; Consumee->dump());
+            LLVM_DEBUG(DSA_INFO << "Outer loop invariant:"; Consumee->dump());
           }
         }
       } else if (!isa<Constant>(Operand)) {
         DB.Entries.push_back(new InputConst(&DB, Operand));
-        LLVM_DEBUG(dbgs() << "Other non const:"; Operand->dump());
+        LLVM_DEBUG(DSA_INFO << "Other non const:"; Operand->dump());
       }
     }
 
@@ -382,7 +382,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         auto *CB = new ComputeBody(&DB, Inst);
         DB.Entries.push_back(CB);
         Entry = CB;
-        LLVM_DEBUG(dbgs() << "Plain Inst: "; Inst->dump());
+        LLVM_DEBUG(DSA_INFO << "Plain Inst: "; Inst->dump());
       }
     } else {
       assert(Inst->getOpcode() == BinaryOperator::Add ||
@@ -393,7 +393,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
       DB.Entries.push_back(Acc);
       CS->Controlled = Acc;
       Entry = Acc;
-      LLVM_DEBUG(dbgs() << "Accumulator: "; Inst->dump());
+      LLVM_DEBUG(DSA_INFO << "Accumulator: "; Inst->dump());
     }
     CHECK(Entry);
   }
@@ -664,8 +664,8 @@ void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
       if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(),
                                          "llvm.loop.ss.dedicated")) {
         auto *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
-        int Factor =
-            (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
+        CHECK(MDFactor);
+        int Factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
         auto *DD = new DedicatedDFG(&DF, SubLoop, Factor);
         DF.addDFG(DD);
       }
@@ -741,14 +741,14 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
         CHECK(sscanf(Token.c_str(), "%d_v%d", &X, &Y) == 2);
         int Port;
         Iss >> Port;
-        LLVM_DEBUG(dbgs() << "sub" << X << "v" << Y << " -> " << Port << "\n");
+        LLVM_DEBUG(DSA_INFO << "sub" << X << "v" << Y << " -> " << Port << "\n");
         auto *Entry = DFGs[X]->Entries[Y];
         if (auto *PB = dyn_cast<PortBase>(Entry)) {
           PB->SoftPortNum = Port;
         } else if (auto *CB = dyn_cast<ComputeBody>(Entry)) {
           CHECK(false) << "This should be deprecated!";
           if (!CB->isImmediateAtomic()) {
-            LLVM_DEBUG(llvm::dbgs() << "OutputPorts:\n");
+            LLVM_DEBUG(DSA_INFO << "OutputPorts:\n");
             auto OutPorts = CB->GetOutPorts();
             for (auto *Port : CB->GetOutPorts()) {
               (void) Port;
@@ -767,7 +767,7 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
             //  for (auto SDVO : dfg.nodes<SSDFGVecOutput*>()) {
             //    if (SDVO->name() == ON) {
             //      OP->Latency = sched->latOf(SDVO);
-            //      LLVM_DEBUG(dbgs() << "[lat] " << ON << ": " << OP->Latency
+            //      LLVM_DEBUG(DSA_INFO << "[lat] " << ON << ": " << OP->Latency
             //      << "\n"); break;
             //    }
             //  }
@@ -965,14 +965,14 @@ bool SpadInfo::isSpad(Value *Ptr) {
     while (!Q.empty()) {
       auto *Cur = Q.front();
       Q.pop();
-      for (auto &Use : Cur->uses()) {
-        if (auto *Prev = dyn_cast<Instruction>(Use)) {
+      for (auto &Operand: Cur->operands()) {
+        if (auto *Prev = dyn_cast<Instruction>(Operand)) {
+          if (Cond(Prev)) {
+            return true;
+          }
           if (!Visited.count(Prev)) {
             Q.push(Prev);
             Visited.insert(Prev);
-            if (Cond(Prev)) {
-              return true;
-            }
           }
         }
       }

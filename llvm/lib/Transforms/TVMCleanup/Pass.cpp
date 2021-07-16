@@ -62,16 +62,16 @@ bool TVMCleanup::runOnModule(Module &M) {
   PMB.LoopVectorize = false;
   PMB.SLPVectorize = false;
   PMB.DisableUnrollLoops = true;
-  llvm::legacy::FunctionPassManager fpass(&M);
-  llvm::legacy::PassManager mpass;
-  PMB.populateFunctionPassManager(fpass);
-  PMB.populateModulePassManager(mpass);
+  // llvm::legacy::FunctionPassManager fpass(&M);
+  // llvm::legacy::PassManager mpass;
+  // PMB.populateFunctionPassManager(fpass);
+  // PMB.populateModulePassManager(mpass);
 
-  for (auto &F : M.getFunctionList()) {
-    fpass.run(F);
-  }
-  fpass.doFinalization();
-  mpass.run(M);
+  // for (auto &F : M.getFunctionList()) {
+  //   fpass.run(F);
+  // }
+  // fpass.doFinalization();
+  // mpass.run(M);
 
   return false;
 }

@@ -825,7 +825,8 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       CGC.INSTANTIATE_1D_STREAM(Start, Stride1D, N1D, Port, P, DSA_Access, MO, MT, DType, 0);
       LOG(CODEGEN)
         << "[1-d Linear] Start: " << *Start << ", Stride: " << *Stride1D << ", N: " << *N1D
-        << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD");
+        << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
+        << (MO == DMO_Read ? ", Read" : ", Write");
       break;
     }
     case 2: {
@@ -844,6 +845,11 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N1D, Stride2D, Stretch,
                                 Length2D, Port, P, DSA_Access, MO, MT, DType,
                                 0);
+      LOG(CODEGEN)
+        << "[1-d Linear] Start: " << *Start << ", S1D: " << *Stride1D << ", N: " << *N1D
+        << ", S2D: " << *Stride2D << ", Stretch: " << *Stretch << ", M: " << *Length2D
+        << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
+        << (MO == DMO_Read ? ", Read" : ", Write");
       break;
     }
     case 3: {

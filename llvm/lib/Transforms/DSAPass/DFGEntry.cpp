@@ -139,7 +139,7 @@ OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) { //
       if (Parent_->InThisDFG(Inst)) {
         Output = dyn_cast<Instruction>(Inst);
         assert(Output);
-        LLVM_DEBUG(dbgs() << "incoming: "; Inst->dump());
+        LLVM_DEBUG(DSA_INFO << "incoming: "; Inst->dump());
         ++Cnt;
       }
     }
@@ -481,7 +481,7 @@ bool Predicate::addCond(Instruction *Inst) {
   for (size_t i = 0; i < Cond.size(); ++i) { // NOLINT
     auto *Elem = Cond[i];
     if (Cmp == Elem) {
-      LLVM_DEBUG(dbgs() << "Alread added! No further operation needed!");
+      LLVM_DEBUG(DSA_INFO << "Alread added! No further operation needed!");
       return Reversed[i];
     }
   }

@@ -145,7 +145,7 @@ BasicBlock *FindLoopPrologue(Loop *L) {
   assert(BI);
   for (int i = 0; i < (int) BI->getNumSuccessors(); ++i) { // NOLINT
     auto *DstBB = BI->getSuccessor(i);
-    LLVM_DEBUG(dbgs() << "Inject stream wait fence " << DstBB->getName()
+    LLVM_DEBUG(DSA_INFO << "Inject stream wait fence " << DstBB->getName()
                       << "\n");
     if (!L->getBlocksSet().count(DstBB)) {
       return DstBB;
