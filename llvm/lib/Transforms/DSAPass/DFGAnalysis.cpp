@@ -1,6 +1,9 @@
 #include "dsa/debug.h"
 
+#include "./CodeXform.h"
 #include "./DFGAnalysis.h"
+#include "./StreamAnalysis.h"
+
 #include "llvm/ADT/iterator_range.h"
 
 #define DEBUG_TYPE "dfg-analysis"
@@ -8,9 +11,8 @@
 namespace dsa {
 namespace analysis {
 
-std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
-GatherConfigScope(Function &F) {
-  std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Res;
+void gatherConfigScope(Function &F, DFGAnalysisResult &DAR) {
+  auto &Res = DAR.Scope;
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (auto *End = dyn_cast<IntrinsicInst>(&I)) {
@@ -22,7 +24,6 @@ GatherConfigScope(Function &F) {
       }
     }
   }
-  return Res;
 }
 
 /*!
@@ -545,40 +546,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
 
     CHECK(!DD.Entries.empty());
-
-
-    // TODO(@were): Open this to support data move.
-    // for (auto Inst : Visited) {
-    //   auto Load = dyn_cast<LoadInst>(Inst);
-
-    //   if (!Load)
-    //     continue;
-
-    //   if (!DD.InThisDFG(Load)) {
-    //     auto MP = dyn_cast<PortBase>(DifferentiateMemoryStream(Load));
-    //     CHECK(MP);
-    //     Entries.push_back(MP);
-    //     size_t j = Entries.size();
-    //     InspectConsumers(Load);
-    //     // FIXME: For now we only support one consumer.
-    //     CHECK(j + 1 == DD.Entries.size()) << "A load without usage?";
-    //     for (; j < Entries.size(); ++j) {
-    //       auto Entry = Entries[j];
-    //       if (auto PM = dyn_cast<PortMem>(Entry)) {
-    //         // FIXME(@were): Deprecate the reserved ports.
-    //         (void) PM; // Pretend I used this variable to avoid warnings.
-    //         CHECK(false) << "Data movement not supported yet!";
-    //       } else if (auto APM = dyn_cast<AtomicPortMem>(Entry)) {
-    //         assert(APM->Store->getValueOperand() == MP->UnderlyingInst());
-    //         APM->Op = MP->UnderlyingInst();
-    //         // FIXME: This is not correct...
-    //         // MP->SoftPortNum = getNextReserved();
-    //       } else {
-    //         assert(false && "This should not happen");
-    //       }
-    //     }
-    //   }
-    // }
   }
 
   void Visit(TemporalDFG *TD) override {
@@ -608,9 +575,11 @@ struct DFGEntryAnalyzer : DFGVisitor {
   DFGEntryAnalyzer(DominatorTree *DT) : DT(DT) {}
 };
 
-SpadInfo ExtractSpadFromScope(IntrinsicInst *Start, IntrinsicInst *End) {
-  std::map<AllocaInst*, int> Offset;
-  int Total = 0;
+void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+  Instruction *Start = DF.Config;
+  Instruction *End = DF.Fence;
+  auto &Offset = DAR.SI.Offset;
+  auto &Total = DAR.SI.Total;
   for (auto *BB : breadth_first(Start->getParent())) {
     iterator_range<BasicBlock::InstListType::iterator> Range(BB->begin(), BB->end());
     if (BB == Start->getParent()) {
@@ -633,11 +602,63 @@ SpadInfo ExtractSpadFromScope(IntrinsicInst *Start, IntrinsicInst *End) {
       }
     }
   }
-  return SpadInfo(Offset, Total);
+  auto &SE = CGC.SE;
+  auto *IB = CGC.IB;
+  auto &Buffet = DAR.SI.Buffet;
+  auto DFGs = DF.DFGFilter<DFGBase>();
+  for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
+    auto *DFG = DFGs[i];
+    for (auto *MP : DFG->EntryFilter<MemPort>()) {
+      // Only the representative of the coalesced memory operations is analyzed.
+      int Belong = DAR.CMI[i].Belong[MP->ID];
+      if (DAR.CMI[i].Clusters[Belong].front().ID != MP->ID) {
+        continue;
+      }
+      const auto *Idx = SE.getSCEV(MP->Load->getPointerOperand());
+      auto LI = analyzeIndexExpr(&SE, Idx, DAR.DLI[i].LoopNest);
+      auto TripCnt = DAR.DLI[i].TripCount;
+      int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+      auto Fused = analysis::fuseInnerDimensions(LI, TripCnt, DType, DFG->getUnroll(),
+                                                 MP->fillMode(), IB, SE);
+      LI = Fused.first;
+      TripCnt = Fused.second;
+      int PI = LI.partialInvariant();
+      std::vector<const SCEV*> N;
+      std::vector<const SCEV*> Stride;
+      for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
+        N.push_back(TripCnt[j].Base);
+        Stride.push_back(LI.Coef[j].Base);
+      }
+      if (LI.Coef.size() - PI == 3) {
+        if (auto *CIS2D = dyn_cast<SCEVConstant>(Stride[1])) {
+          if (auto *CIN1D = dyn_cast<SCEVConstant>(N[0])) {
+            if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
+              if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
+                int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+                int SLPMul = DAR.CMI[i].Clusters[Belong].size();
+                int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType * SLPMul;
+                LOG(BUFFET)
+                  << Buffet.size() << ": " << MP->dump() << ", "
+                  << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << SLPMul << " * " << DType
+                  << " * 2 = " << BufferSize << "\n" << LI.toString() << "\n"
+                  << DAR.SI.isSpad(MP->Load);
+                // MP, Total, BufferSize, -1
+                Buffet.emplace_back(MP, Total, BufferSize, -1, -1);
+                Total += BufferSize;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
-void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
-                         DominatorTree *DT, LoopInfo *LI) {
+void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
+  auto *Start = DF.Config;
+  auto *End = DF.Fence;
+  auto *DT = CGC.DT;
+  auto *LI = CGC.LI;
   // Extract the sketch of dedicated and temporal DFGs respectively.
   // The instruction entries in each DFG cannot be instantiated until all the
   // sketches are extracted, because we need this to analyze inter-DFG
@@ -705,11 +726,12 @@ void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
   // All the sketches are extracted. Fill in the entries.
   for (auto *Elem : DF.DFGFilter<DFGBase>()) {
     DFGEntryAnalyzer DEA(DT);
-    Elem->Accept(&DEA);
+    Elem->accept(&DEA);
   }
 }
 
-ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs) {
+ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs,
+                           SpadInfo &SI) {
   std::ifstream Ifs(FName + ".h");
   auto DFGs = DF.DFGFilter<DFGBase>();
 
@@ -727,6 +749,8 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
   std::string IClusterPrefix = PortPrefix + "ICluster";
   std::string OClusterPrefix = PortPrefix + "OCluster";
   std::string IndirectPrefix = PortPrefix + "indirect_";
+  std::string IBuffetPrefix = PortPrefix + "IBuffet";
+  std::string OBuffetPrefix = PortPrefix + "OBuffet";
   while (std::getline(Ifs, Line)) {
     std::istringstream Iss(Line);
     std::string Token;
@@ -749,15 +773,15 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
           CHECK(false) << "This should be deprecated!";
           if (!CB->isImmediateAtomic()) {
             LLVM_DEBUG(DSA_INFO << "OutputPorts:\n");
-            auto OutPorts = CB->GetOutPorts();
-            for (auto *Port : CB->GetOutPorts()) {
+            auto OutPorts = CB->getOutPorts();
+            for (auto *Port : CB->getOutPorts()) {
               (void) Port;
-              LLVM_DEBUG(Port->UnderlyingInst()->dump());
+              LLVM_DEBUG(Port->underlyingInst()->dump());
             }
             // FIXME: For now only one destination is supported
             // Later divergence will be supported
             CHECK(OutPorts.size() == 1)
-                << *CB->UnderlyingInst() << " " << OutPorts.size();
+                << *CB->underlyingInst() << " " << OutPorts.size();
             OutPorts[0]->SoftPortNum = Port;
 
             // Fill in the latency of each node.
@@ -780,7 +804,7 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
           CHECK(false) << "DSAPass port information gathering unreachable!";
         }
         // #define dfgx_size size
-      } else if (Token.find(IClusterPrefix.size()) == 0 || Token.find(OClusterPrefix) == 0) {
+      } else if (Token.find(IClusterPrefix) == 0 || Token.find(OClusterPrefix) == 0) {
         Token = Token.substr(IClusterPrefix.size());
         int X, Y, Port;
         CHECK(sscanf(Token.c_str(), "_%d_%d_", &X, &Y) == 2);
@@ -810,6 +834,18 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
         auto *APM = dyn_cast<AtomicPortMem>(DFGs[X]->Entries[Y]);
         CHECK(APM);
         Iss >> APM->OperandPort;
+      } else if (Token.find(IBuffetPrefix) == 0 || Token.find(OBuffetPrefix) == 0) {
+        bool IsInput = Token.find(IBuffetPrefix) == 0;
+        Token = Token.substr(IBuffetPrefix.size());
+        int X;
+        CHECK(sscanf(Token.c_str(), "_%d_", &X));
+        if (IsInput) {
+          Iss >> std::get<3>(SI.Buffet[X]);
+          DSA_INFO << "Buffet Read Port: " << std::get<3>(SI.Buffet[X]);
+        } else {
+          Iss >> std::get<4>(SI.Buffet[X]);
+          DSA_INFO << "Buffet Write Port: " << std::get<4>(SI.Buffet[X]);
+        }
       } else {
         CHECK(false) << "Unrecognized token: " << Token;
       }
@@ -832,7 +868,7 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
 }
 
 
-DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
+void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   struct DFGLoopAnalyzer : DFGVisitor {
     void Visit(DedicatedDFG *DD) override {
       auto &LoopNest = DD->LoopNest;
@@ -840,44 +876,46 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
       for (int I = 0; I < (int) LoopNest.size(); ++I) {
         auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[I]);
         if (isa<SCEVCouldNotCompute>(NSCEV)) {
-          DLI.TripCount.push_back(nullptr);
+          DLI.TripCount.push_back(LinearInfo());
         } else {
-          DLI.TripCount.push_back(analysis::AnalyzeIndexExpr(&SE, NSCEV, LoopNest));
+          DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest));
         }
       }
     }
 
     void Visit(TemporalDFG *TD) override {}
 
-    DFGLoopInfo DLI;
     ScalarEvolution &SE;
+    DFGLoopInfo &DLI;
 
-    DFGLoopAnalyzer(ScalarEvolution &SE) : SE(SE) {}
+    DFGLoopAnalyzer(ScalarEvolution &SE, DFGLoopInfo &DLI) : SE(SE), DLI(DLI) {}
   };
 
-  DFGLoopAnalyzer DLA(SE);
-  DB->Accept(&DLA);
-  return DLA.DLI;
+  for (auto *DB : DF.DFGFilter<DFGBase>()) {
+    DAR.DLI.emplace_back();
+    DFGLoopAnalyzer DLA(CGC.SE, DAR.DLI.back());
+    DB->accept(&DLA);
+  }
 }
 
 
-int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
+int64_t indexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
                         const DFGLoopInfo &DLI, bool Signed) {
-  auto *A = AnalyzeIndexExpr(&SE, SA, DLI.LoopNest);
-  auto *B = AnalyzeIndexExpr(&SE, SB, DLI.LoopNest);
+  auto A = analyzeIndexExpr(&SE, SA, DLI.LoopNest);
+  auto B = analyzeIndexExpr(&SE, SB, DLI.LoopNest);
   bool SameDims = true;
-  if (A->Coef.size() == B->Coef.size()) {
+  if (A.Coef.size() != B.Coef.size()) {
     CHECK(!Signed);
     return -1;
   }
-  for (int J = 0; J < (int) A->Coef.size(); ++J) {
-    if (A->Coef[J]->Base != B->Coef[J]->Base) {
-      DSA_INFO << *SE.getEqualPredicate(A->Coef[J]->Base, B->Coef[J]->Base);
+  for (int J = 0; J < (int) A.Coef.size(); ++J) {
+    if (A.Coef[J].Base != B.Coef[J].Base) {
+      LOG(COAL) << *SE.getEqualPredicate(A.Coef[J].Base, B.Coef[J].Base);
       SameDims = false;
     }
   }
   if (SameDims) {
-    if (auto *Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(B->Base, SE.getNegativeSCEV(A->Base)))) {
+    if (auto *Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(B.Base, SE.getNegativeSCEV(A.Base)))) {
       auto Res = Offset->getAPInt().getSExtValue();
       return Signed ? Res : std::abs(Res);
     }
@@ -887,36 +925,36 @@ int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
 }
 
 
-std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLIs) {
+void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult &DAR) {
   auto DFGs = DF.DFGFilter<DFGBase>();
-  CHECK(DLIs.size() == DFGs.size());
-  std::vector<CoalMemoryInfo> Res;
-  for (int I = 0; I < (int) DFGs.size(); ++I) {
-    auto &Entries = DFGs[I]->Entries;
-    auto &DLI = DLIs[I];
+  CHECK(DAR.DLI.size() == DFGs.size());
+  auto &Res = DAR.CMI;
+  for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
+    auto &Entries = DFGs[i]->Entries;
+    auto &DLI = DAR.DLI[i];
     std::vector<int> DSU(Entries.size());
-    for (int J = 0; J < (int) DSU.size(); ++J) {
-      DSU[J] = J;
+    for (int j = 0; j < (int) DSU.size(); ++j) { // NOLINT
+      DSU[j] = j;
     }
-    GatherMemoryCoalescingImpl<MemPort>(DFGs[I], SE, DLIs[I], DSU);
-    GatherMemoryCoalescingImpl<PortMem>(DFGs[I], SE, DLIs[I], DSU);
+    gatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLI, DSU);
+    gatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLI, DSU);
     Res.emplace_back();
     CoalMemoryInfo &Current = Res.back();
     Current.Belong.resize(Entries.size(), -1);
     std::map<int, int> DSU2Cluster;
-    for (int J = 0; J < (int) DSU.size(); ++J) {
-      int Set = utils::DSUGetSet(DSU[J], DSU);
+    for (int j = 0; j < (int) DSU.size(); ++j) { // NOLINT
+      int Set = utils::DSUGetSet(DSU[j], DSU);
       if (!DSU2Cluster.count(Set)) {
         DSU2Cluster[Set] = DSU2Cluster[Set] = DSU2Cluster.size();
         Current.Clusters.emplace_back();
         CHECK(Current.Clusters.size() == DSU2Cluster.size());
       }
-      Current.Clusters[DSU2Cluster[Set]].emplace_back(J);
+      Current.Clusters[DSU2Cluster[Set]].emplace_back(j);
       Current.ClusterPortNum.push_back(-1);
-      Current.Belong[J] = DSU2Cluster[Set];
+      Current.Belong[j] = DSU2Cluster[Set];
     }
-    for (int J = 0; J < (int) Current.Clusters.size(); ++J) {
-      auto &Cluster = Current.Clusters[J];
+    for (int j = 0; j < (int) Current.Clusters.size(); ++j) { // NOLINT
+      auto &Cluster = Current.Clusters[j];
       Cluster[0].Offset = 0;
       struct PtrExtractor : DFGEntryVisitor {
         void Visit(MemPort *MP) override {
@@ -927,24 +965,25 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
         }
         Value *Ptr{nullptr};
       };
-      auto FCompOffset = [&Entries, &Cluster, &SE, &DLI]() {
+      auto NormalizeOffset = [&Entries, &Cluster, &SE, &DLI]() {
         PtrExtractor Base;
-        Entries[Cluster[0].ID]->Accept(&Base);
-        for (int K = 1; K < (int) Cluster.size(); ++K) {
+        Entries[Cluster[0].ID]->accept(&Base);
+        Cluster[0].Offset = 0;
+        for (int k = 1; k < (int) Cluster.size(); ++k) { // NOLINT
           PtrExtractor PE;
-          Entries[Cluster[K].ID]->Accept(&PE);
-          Cluster[K].Offset = IndexPairOffset(SE.getSCEV(Base.Ptr), SE.getSCEV(PE.Ptr), SE, DLI, true);
+          Entries[Cluster[k].ID]->accept(&PE);
+          Cluster[k].Offset =
+            indexPairOffset(SE.getSCEV(Base.Ptr), SE.getSCEV(PE.Ptr), SE, DLI, true);
         }
       };
       auto FCmp = [] (const CoalMemoryInfo::CoalescedEntry &A, const CoalMemoryInfo::CoalescedEntry &B) {
         return A.Offset < B.Offset;
       };
-      FCompOffset();
+      NormalizeOffset();
       std::sort(Cluster.begin(), Cluster.end(), FCmp);
-      FCompOffset();
+      NormalizeOffset();
     }
   }
-  return Res;
 }
 
 bool SpadInfo::isSpad(Value *Ptr) {

@@ -143,7 +143,7 @@ bool CanBeStretched(int x, const std::vector<Loop*> &LoopNest, // NOLINT
 
 DFGEntry *DFGBase::InThisDFG(Value *Val) {
   for (auto &Elem : Entries) {
-    for (auto &Iter : Elem->UnderlyingValues()) {
+    for (auto &Iter : Elem->underlyingValues()) {
       if (Iter == Val) {
         return Elem;
       }
@@ -159,9 +159,9 @@ Instruction *TemporalDFG::DefaultIP() { return IP; }
 Instruction *DedicatedDFG::DefaultIP() { return &Preheader->back(); }
 
 bool DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
-  std::set<Value *> Visited{MP->UnderlyingInst()};
+  std::set<Value *> Visited{MP->underlyingInst()};
   std::queue<Value *> Q;
-  Q.push(MP->UnderlyingInst());
+  Q.push(MP->underlyingInst());
   while (!Q.empty()) {
     auto *Cur = Q.front();
     Q.pop();
@@ -348,108 +348,6 @@ void DFGFile::addDFG(DFGBase *DB) {
   assert(!AllInitialized &&
          "You can no longer modify the dfg after scheduling");
   DFGs.push_back(DB);
-}
-
-void DFGFile::EraseOffloadedInstructions() {
-
-  std::set<Instruction *> Unique;
-
-  for (auto &DFG : DFGs) {
-    for (auto *Entry : DFG->Entries) {
-
-      // Skip instructions cannot be offloaded because of flags
-      if (isa<IndMemPort>(Entry) && !dsa::utils::ModuleContext().IND) {
-        continue;
-      }
-      if (isa<AtomicPortMem>(Entry) && !dsa::utils::ModuleContext().IND) {
-        continue;
-      }
-      if ((isa<CtrlMemPort>(Entry) || isa<Predicate>(Entry)) &&
-          !dsa::utils::ModuleContext().PRED) {
-        continue;
-      }
-
-      auto F = [&Unique](Instruction *Inst) {
-        bool SS = false;
-        LLVM_DEBUG(Inst->dump());
-        for (auto *User : Inst->users()) {
-          LLVM_DEBUG(DSA_INFO << "user: "; User->dump());
-          if (auto *Call = dyn_cast<CallInst>(User)) {
-            if (auto *IA = dyn_cast<InlineAsm>(Call->getCalledOperand())) {
-              SS |= IA->getAsmString().find("ss_") == 0;
-            }
-          }
-        }
-        for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
-          auto *Use = Inst->getOperand(i);
-          LLVM_DEBUG(DSA_INFO << "use: "; Use->dump());
-          if (auto *Call = dyn_cast<CallInst>(Use)) {
-            if (auto *IA = dyn_cast<InlineAsm>(Call->getCalledOperand())) {
-              SS |= IA->getAsmString().find("ss_") == 0;
-            }
-          }
-        }
-        if (!SS) {
-          Unique.insert(Inst);
-          LLVM_DEBUG(DSA_INFO << "DELETE: "; Inst->dump());
-        }
-        LLVM_DEBUG(DSA_INFO << "\n");
-      };
-
-      if (auto *P = dyn_cast<Predicate>(Entry)) {
-        for (auto *Elem : P->Cond)
-          F(Elem);
-      } else if (Entry->UnderlyingInst()) {
-        F(Entry->UnderlyingInst());
-      }
-    }
-
-    if (auto *DD = dyn_cast<DedicatedDFG>(DFG)) {
-      auto *StreamMD = GetUnrollMetadata(DD->LoopNest.back()->getLoopID(),
-                                        "llvm.loop.ss.stream");
-      auto *BarrierMD = dyn_cast<ConstantAsMetadata>(StreamMD->getOperand(1));
-      if (BarrierMD->getValue()->getUniqueInteger().getSExtValue()) {
-        // Find the "break" finger, and inject the wait at the "break" finger
-        // block's end
-        auto *OutBB = FindLoopPrologue(DD->LoopNest.back());
-        Instruction *I = &OutBB->back();
-        for (; !isa<PHINode>(I); I = I->getPrevNode()) {
-          bool Found = false;
-          for (auto *Elem : DD->InjectedCode) {
-            if (I == Elem) {
-              Found = true;
-              break;
-            }
-          }
-          if (isa<PHINode>(I) || Found) {
-            auto *IB = Query->IBPtr;
-            IB->SetInsertPoint(I->getNextNode());
-            // dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
-            break;
-          }
-          if (I == &I->getParent()->front()) {
-            auto *IB = Query->IBPtr;
-            IB->SetInsertPoint(I);
-            // dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
-            break;
-          }
-        }
-
-      } else {
-        LLVM_DEBUG(DSA_INFO << "No barrier required!\n");
-      }
-    } else if (auto *TD = dyn_cast<TemporalDFG>(DFG)) {
-      TD->End->eraseFromParent();
-      TD->Begin->eraseFromParent();
-    }
-  }
-
-  for (auto *Inst : Unique) {
-    Inst->replaceAllUsesWith(UndefValue::get(Inst->getType()));
-    Inst->eraseFromParent();
-  }
-
-  LLVM_DEBUG(DSA_INFO << "Rip out all original instrucitons\n");
 }
 
 Loop *DedicatedDFG::InnerMost() { return LoopNest.front(); }
@@ -853,119 +751,6 @@ bool TemporalDFG::InThisScope(Instruction *Inst) {
   return false;
 }
 
-void DFGFile::InspectSPADs() {
-
-  AddrsOnSpad.clear();
-
-  Function *Start = nullptr, *End = nullptr;
-
-  for (auto &Iter : *Func.getParent()) {
-    if (Iter.getName().startswith("llvm.lifetime.start")) {
-      Start = &Iter;
-    }
-    if (Iter.getName().startswith("llvm.lifetime.end")) {
-      End = &Iter;
-    }
-  }
-
-  auto HasAlloc = [](Function &F) {
-    for (auto &BB : F) {
-      for (auto &I : BB) {
-        if (isa<AllocaInst>(&I)) {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-
-  if (!HasAlloc(Func)) {
-    return;
-  }
-
-  if (!Start) {
-    assert(!End);
-    return;
-  }
-
-  auto *IP = Config;
-  auto *IBPtr = Query->IBPtr;
-  if (!isa<BranchInst>(IP))
-    IP = IP->getNextNode();
-  IBPtr->SetInsertPoint(IP);
-  auto *SpadPtr = IBPtr->CreateAlloca(IBPtr->getInt64Ty(), IBPtr->getInt64(1));
-  auto *SpadI8Ptr = IBPtr->CreateBitCast(SpadPtr, IBPtr->getInt8PtrTy());
-  auto *Self = IBPtr->CreateCall(Start, {IBPtr->getInt64(8), SpadI8Ptr});
-  auto *GEP = IBPtr->CreateGEP(SpadPtr, IBPtr->getInt64(0));
-  IBPtr->CreateStore(IBPtr->getInt64(0), GEP);
-
-  std::vector<Instruction *> ToInject;
-  auto *DT = Query->DT;
-
-  for (auto &BB : Func) {
-    if (!DT->dominates(&BB.front(), Fence))
-      continue;
-    if (&BB != Config->getParent() && !DT->dominates(Config, &BB))
-      continue;
-    auto Range = make_range(
-        &BB != Config->getParent() ? BB.begin() : Config->getIterator(),
-        &BB != Fence->getParent() ? BB.end() : Fence->getIterator());
-    for (auto &Inst : Range) {
-      if (isa<ReturnInst>(Inst)) {
-        ToInject.push_back(&Inst);
-      }
-
-      auto *Intrin = dyn_cast<IntrinsicInst>(&Inst);
-      if (!Intrin)
-        continue;
-      if (Intrin == Self)
-        continue;
-
-      if (Intrin->getIntrinsicID() == Intrinsic::lifetime_start ||
-          Intrin->getIntrinsicID() == Intrinsic::lifetime_end) {
-        ToInject.push_back(&Inst);
-      }
-    }
-  }
-
-  for (auto *Inst : ToInject) {
-    if (isa<ReturnInst>(Inst)) {
-      IBPtr->SetInsertPoint(Inst);
-      IBPtr->CreateCall(End, {IBPtr->getInt64(8), SpadI8Ptr});
-    }
-    if (auto *Intrin = dyn_cast<IntrinsicInst>(Inst)) {
-
-      auto F = [this, GEP, IBPtr](IntrinsicInst *Intrin) {
-        assert(Intrin->getNumOperands() == 3);
-        auto *Size = Intrin->getOperand(0);
-        // Calling an LLVM function will put this function as the last argument
-        // of the CallSite.
-        auto *CI = dyn_cast<CastInst>(Intrin->getOperand(1));
-        assert(CI);
-        auto *AI = dyn_cast<AllocaInst>(CI->getOperand(0));
-        IBPtr->SetInsertPoint(Intrin);
-        auto *Ptr = IBPtr->CreateLoad(GEP);
-        Value *Val = nullptr;
-        switch (Intrin->getIntrinsicID()) {
-        case Intrinsic::lifetime_start:
-          AddrsOnSpad[AI] = Ptr;
-          AddrsOnSpad[CI] = Ptr;
-          Val = IBPtr->CreateAdd(Ptr, Size);
-          break;
-        case Intrinsic::lifetime_end:
-          Val = IBPtr->CreateSub(Ptr, Size);
-          break;
-        default:
-          assert(0);
-        }
-        IBPtr->CreateStore(Val, GEP);
-      };
-
-      F(Intrin);
-    }
-  }
-}
-
-void DFGBase::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
-void DedicatedDFG::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
-void TemporalDFG::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void DFGBase::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void DedicatedDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void TemporalDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }

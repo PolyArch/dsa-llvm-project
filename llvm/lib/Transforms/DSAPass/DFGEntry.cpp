@@ -28,10 +28,10 @@ DFGEntry::DFGEntry(DFGBase *Parent_) : Parent(Parent_) { // NOLINT
 Predicate *DFGEntry::getPredicate(int *X) {
   auto *DT = Parent->Parent->Query->DT;
 
-  if (!UnderlyingInst())
+  if (!underlyingInst())
     return nullptr;
   // Sometimes, the CFG is too simple to have a immediate dom.
-  if (auto *Inst = dyn_cast<Instruction>(UnderlyingInst())) {
+  if (auto *Inst = dyn_cast<Instruction>(underlyingInst())) {
     Predicate *Res = nullptr;
     for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
       if (auto *Entry = Parent->InThisDFG(Inst->getOperand(i))) {
@@ -76,7 +76,7 @@ Predicate *DFGEntry::getPredicate(int *X) {
 }
 
 int DFGEntry::getAbstainBit() {
-  if (auto *Inst = UnderlyingInst()) {
+  if (auto *Inst = underlyingInst()) {
     auto *DT = Parent->Parent->Query->DT;
     auto *CurrentBB = Inst->getParent();
     Predicate *Pred = nullptr;
@@ -97,7 +97,7 @@ int DFGEntry::getAbstainBit() {
         } else {
           assert(Pred == Parent->InThisDFG(Cond));
         }
-        int SubRes = Pred->ToCompareRes(dyn_cast<Instruction>(Cond),
+        int SubRes = Pred->toCompareRes(dyn_cast<Instruction>(Cond),
                                         BI->getSuccessor(0) == CurrentBB);
         assert(SubRes != -1);
         Res &= SubRes;
@@ -109,8 +109,8 @@ int DFGEntry::getAbstainBit() {
   return 0;
 }
 
-std::string DFGEntry::Name(int Idx) {
-  if (Idx != -1 && ShouldUnroll()) {
+std::string DFGEntry::name(int Idx) {
+  if (Idx != -1 && shouldUnroll()) {
     return formatv("sub{0}_v{1}_{2}", Parent->ID, ID, Idx);
   }
   return formatv("sub{0}_v{1}_", Parent->ID, ID);
@@ -190,44 +190,44 @@ CtrlMemPort::CtrlMemPort(DFGBase *Parent_, LoadInst *Load_, Value *Start_, // NO
 
 Predicate *CtrlMemPort::getPredicate(int *) { return Pred; }
 
-Instruction *CtrlMemPort::UnderlyingInst() { return Load; }
+Instruction *CtrlMemPort::underlyingInst() { return Load; }
 
-int PortBase::PortWidth() {
-  return UnderlyingValue()->getType()->getScalarSizeInBits();
+int PortBase::portWidth() {
+  return underlyingValue()->getType()->getScalarSizeInBits();
 }
 
-Instruction *DFGEntry::UnderlyingInst() { return nullptr; }
+Instruction *DFGEntry::underlyingInst() { return nullptr; }
 
-Value *DFGEntry::UnderlyingValue() { return UnderlyingInst(); }
+Value *DFGEntry::underlyingValue() { return underlyingInst(); }
 
-bool DFGEntry::IsInMajor() {
-  if (!UnderlyingInst()) {
+bool DFGEntry::isInMajor() {
+  if (!underlyingInst()) {
     return false;
   }
   for (auto *BB : Parent->getBlocks())
-    if (UnderlyingInst()->getParent() == BB)
+    if (underlyingInst()->getParent() == BB)
       return true;
   return false;
 }
 
-Instruction *ComputeBody::UnderlyingInst() { return Operation; }
+Instruction *ComputeBody::underlyingInst() { return Operation; }
 
-Instruction *MemPort::UnderlyingInst() { return Load; }
+Instruction *MemPort::underlyingInst() { return Load; }
 
-Instruction *PortMem::UnderlyingInst() { return Store; }
+Instruction *PortMem::underlyingInst() { return Store; }
 
-std::vector<Instruction *> InputConst::UnderlyingInsts() {
+std::vector<Instruction *> InputConst::underlyingInsts() {
   if (auto *Inst = dyn_cast<Instruction>(Val)) {
     return {Inst};
   }
   return {};
 }
 
-Instruction *InputConst::UnderlyingInst() { return dyn_cast<Instruction>(Val); }
+Instruction *InputConst::underlyingInst() { return dyn_cast<Instruction>(Val); }
 
-std::vector<Value *> InputConst::UnderlyingValues() { return {Val}; }
+std::vector<Value *> InputConst::underlyingValues() { return {Val}; }
 
-Value *InputConst::UnderlyingValue() { return Val; }
+Value *InputConst::underlyingValue() { return Val; }
 
 InputConst::InputConst(DFGBase *Parent_, Value *Val_) // NOLINT
     : InputPort(Parent_), Val(Val_) {
@@ -244,13 +244,13 @@ StreamOutPort::StreamOutPort(DFGBase *Parent_, Instruction *Inst) // NOLINT
   Kind = kStreamOutPort;
 }
 
-Instruction *OutputPort::UnderlyingInst() { return Output; }
+Instruction *OutputPort::underlyingInst() { return Output; }
 
-Instruction *StreamInPort::UnderlyingInst() { return DataFrom; }
+Instruction *StreamInPort::underlyingInst() { return DataFrom; }
 
-int OutputPort::PortWidth() { return Output->getType()->getScalarSizeInBits(); }
+int OutputPort::portWidth() { return Output->getType()->getScalarSizeInBits(); }
 
-StreamInPort *StreamOutPort::FindConsumer() {
+StreamInPort *StreamOutPort::findConsumer() {
   for (auto &DFG : Parent->Parent->DFGs) {
     if (DFG == Parent)
       continue;
@@ -259,11 +259,11 @@ StreamInPort *StreamOutPort::FindConsumer() {
         return SIP;
     }
   }
-  CHECK(false) << "Cannot find consumer for " << *UnderlyingInst();
+  CHECK(false) << "Cannot find consumer for " << *underlyingInst();
   return nullptr;
 }
 
-std::vector<OutputPort *> ComputeBody::GetOutPorts() {
+std::vector<OutputPort *> ComputeBody::getOutPorts() {
   std::vector<OutputPort *> Res;
   for (auto *Elem : Parent->Entries) {
     if (auto *OP = dyn_cast<OutputPort>(Elem)) {
@@ -274,7 +274,7 @@ std::vector<OutputPort *> ComputeBody::GetOutPorts() {
       while (!Q.empty()) {
         auto *Cur = Q.front();
         Q.pop();
-        if (Cur == UnderlyingInst()) {
+        if (Cur == underlyingInst()) {
           Res.push_back(OP);
           break;
         }
@@ -290,49 +290,49 @@ std::vector<OutputPort *> ComputeBody::GetOutPorts() {
   return Res;
 }
 
-bool DFGEntry::ShouldUnroll() {
+bool DFGEntry::shouldUnroll() {
   if (Parent->getUnroll() <= 1)
     return false;
-  if (!IsInMajor())
+  if (!isInMajor())
     return false;
   return true;
 }
 
-bool ComputeBody::ShouldUnroll() {
-  if (!DFGEntry::ShouldUnroll())
+bool ComputeBody::shouldUnroll() {
+  if (!DFGEntry::shouldUnroll())
     return false;
-  auto *Inst = UnderlyingInst();
+  auto *Inst = underlyingInst();
   for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
     if (auto *Entry = Parent->InThisDFG(Inst->getOperand(i))) {
-      if (Entry->ShouldUnroll())
+      if (Entry->shouldUnroll())
         return true;
     }
   }
   return false;
 }
 
-bool Accumulator::ShouldUnroll() { return false; }
+bool Accumulator::shouldUnroll() { return false; }
 
-bool CtrlSignal::ShouldUnroll() { return false; }
+bool CtrlSignal::shouldUnroll() { return false; }
 
-bool OutputPort::ShouldUnroll() {
-  if (!DFGEntry::ShouldUnroll())
+bool OutputPort::shouldUnroll() {
+  if (!DFGEntry::shouldUnroll())
     return false;
   auto *OV = Parent->InThisDFG(Output);
   CHECK(OV);
-  return OV->ShouldUnroll();
+  return OV->shouldUnroll();
 }
 
-bool MemPort::ShouldUnroll() {
-  if (!DFGEntry::ShouldUnroll())
+bool MemPort::shouldUnroll() {
+  if (!DFGEntry::shouldUnroll())
     return false;
   if (auto *DD = dyn_cast<DedicatedDFG>(Parent))
     return !DD->InnerMost()->isLoopInvariant(Load->getPointerOperand());
   return false;
 }
 
-bool IndMemPort::ShouldUnroll() {
-  if (!DFGEntry::ShouldUnroll())
+bool IndMemPort::shouldUnroll() {
+  if (!DFGEntry::shouldUnroll())
     return false;
   if (auto *DD = dyn_cast<DedicatedDFG>(Parent))
     return !DD->InnerMost()->isLoopInvariant(Index->Load->getPointerOperand());
@@ -354,7 +354,7 @@ bool HasOtherUser(InputPort *IP, Value *Val) { // NOLINT
   return false;
 }
 
-int DFGEntry::Index() {
+int DFGEntry::index() {
   assert(ID != -1);
   return ID;
 }
@@ -362,19 +362,19 @@ int DFGEntry::Index() {
 void DFGEntry::dump(std::ostringstream &OS) {
   OS << "[" << (void *)this << "] " << KindStr[Kind] << " ("
      << (void *)getPredicate() << ")";
-  if (UnderlyingInst()) {
+  if (underlyingInst()) {
     std::string Res;
     raw_string_ostream OSS(Res);
-    OSS << *UnderlyingInst();
+    OSS << *underlyingInst();
     OS << OSS.str();
   } else {
     OS << "\n";
   }
 }
 
-Value *Accumulator::NumValuesProduced() {
-  auto *Inst = UnderlyingInst();
-  assert(IsInMajor());
+Value *Accumulator::numValuesProduced() {
+  auto *Inst = underlyingInst();
+  CHECK(isInMajor());
   for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
     if (auto *Phi = dyn_cast<PHINode>(Inst->getOperand(i))) {
       for (size_t j = 0; j < Phi->getNumIncomingValues(); ++j) { // NOLINT
@@ -406,7 +406,7 @@ Value *Accumulator::NumValuesProduced() {
   return nullptr;
 }
 
-int MemPort::FillMode() {
+int MemPort::fillMode() {
   if (auto *DD = dyn_cast<DedicatedDFG>(Parent)) {
     if (Parent->getUnroll() <= 1)
       return DP_NoPadding;
@@ -422,7 +422,7 @@ IndMemPort::IndMemPort(DFGBase *Parent_, LoadInst *Index_, LoadInst *Load) // NO
   Kind = kIndMemPort;
 }
 
-Instruction *IndMemPort::UnderlyingInst() { return Load; }
+Instruction *IndMemPort::underlyingInst() { return Load; }
 
 std::string getOperationStr(Instruction *Inst, bool isAcc, bool predicated) { // NOLINT
   std::string OpStr;
@@ -492,7 +492,7 @@ bool Predicate::addCond(Instruction *Inst) {
   return Reverse;
 }
 
-int Predicate::Contains(Instruction *Inst) {
+int Predicate::contains(Instruction *Inst) {
   for (size_t i = 0; i < Cond.size(); ++i) { // NOLINT
     if (Cond[i] == Inst)
       return i;
@@ -500,8 +500,8 @@ int Predicate::Contains(Instruction *Inst) {
   return -1;
 }
 
-int Predicate::ToCompareRes(Instruction *Inst, bool TF) {
-  int Idx = Contains(Inst);
+int Predicate::toCompareRes(Instruction *Inst, bool TF) {
+  int Idx = contains(Inst);
   assert(Idx != -1);
   auto *Cmp = dyn_cast<ICmpInst>(Inst);
   if (!Cmp)
@@ -570,7 +570,7 @@ struct ControlBit {
 };
 
 // TODO(@were): Do I need to support vectorized comparison?
-void Predicate::EmitCond(std::ostringstream &OS) {
+void Predicate::emitCond(std::ostringstream &OS) {
 
   if (!dsa::utils::ModuleContext().PRED) {
     return;
@@ -587,7 +587,7 @@ void Predicate::EmitCond(std::ostringstream &OS) {
   }
 
   ControlBit CtrlBit;
-  OS << Name(-1) << " = Compare"
+  OS << name(-1) << " = Compare"
      << Cond[0]->getOperand(0)->getType()->getScalarSizeInBits() << "(";
   for (size_t i = 0; i < Cond[0]->getNumOperands(); ++i) { // NOLINT
     auto *Val = Cond[0]->getOperand(i);
@@ -595,7 +595,7 @@ void Predicate::EmitCond(std::ostringstream &OS) {
       OS << ", ";
     }
     if (auto *EntryOp = Parent->InThisDFG(Val)) {
-      OS << EntryOp->Name(-1);
+      OS << EntryOp->name(-1);
       CtrlBit.addControlledMemoryStream(i, EntryOp);
       if (auto *CMP = dyn_cast<CtrlMemPort>(EntryOp))
         CMP->ForPredicate = true;
@@ -608,7 +608,7 @@ void Predicate::EmitCond(std::ostringstream &OS) {
     if (CtrlBit.Pred == this)
       OS << ", self=";
     else
-      OS << ", ctrl=" << CtrlBit.Pred->Name(-1);
+      OS << ", ctrl=" << CtrlBit.Pred->name(-1);
     OS << "{" << CtrlBit.finalize() << "}";
   }
 
@@ -617,7 +617,7 @@ void Predicate::EmitCond(std::ostringstream &OS) {
 
 AtomicPortMem *ComputeBody::isAtomic() {
   for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {
-    if (Entry->Op == UnderlyingInst()) {
+    if (Entry->Op == underlyingInst()) {
       return Entry;
     }
   }
@@ -626,9 +626,9 @@ AtomicPortMem *ComputeBody::isAtomic() {
 
 // void ComputeBody::EmitAtomic(std::ostringstream &OS) {
 //   if (isImmediateAtomic()) {
-//     OS << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": "
-//        << Name();
-//     if (ShouldUnroll())
+//     OS << "Output" << underlyingInst()->getType()->getScalarSizeInBits() << ": "
+//        << name();
+//     if (shouldUnroll())
 //       OS << "[" << Parent->getUnroll() << "]";
 //     OS << "\n";
 //   }
@@ -636,7 +636,7 @@ AtomicPortMem *ComputeBody::isAtomic() {
 
 AtomicPortMem *ComputeBody::isImmediateAtomic() {
   for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {
-    if (Entry->OpCode != 3 && Entry->Operand == UnderlyingInst()) {
+    if (Entry->OpCode != 3 && Entry->Operand == underlyingInst()) {
       return Entry;
     }
   }
@@ -648,9 +648,9 @@ Predicate::Predicate(DFGBase *Parent_, Instruction *Cond_) // NOLINT
   Kind = kPredicate;
 }
 
-bool Predicate::ShouldUnroll() { return false; }
+bool Predicate::shouldUnroll() { return false; }
 
-Instruction *Predicate::UnderlyingInst() { return Cond[0]; }
+Instruction *Predicate::underlyingInst() { return Cond[0]; }
 
 int TBits(int Bits) { // NOLINT
   switch (Bits) {
@@ -671,7 +671,7 @@ int TBits(int Bits) { // NOLINT
 // If this IndMemPort is a source operand of atomic update, i.e. a[b[i]] ?= operand.
 bool IndMemPort::duplicated() {
   for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {
-    if (Index->UnderlyingInst() == Entry->Index->UnderlyingInst()) {
+    if (Index->underlyingInst() == Entry->Index->underlyingInst()) {
       return true;
     }
   }
@@ -692,28 +692,28 @@ AtomicPortMem::AtomicPortMem(DFGBase *Parent_, LoadInst *Index_, // NOLINT
   }
 }
 
-Instruction *AtomicPortMem::UnderlyingInst() { return Store; }
+Instruction *AtomicPortMem::underlyingInst() { return Store; }
 
-std::vector<Instruction *> Predicate::UnderlyingInsts() {
+std::vector<Instruction *> Predicate::underlyingInsts() {
   return std::vector<Instruction *>(Cond.data(), Cond.data() + Cond.size());
 }
 
-std::vector<Instruction *> IndMemPort::UnderlyingInsts() {
+std::vector<Instruction *> IndMemPort::underlyingInsts() {
   return {Index->Load, Load};
 }
 
-std::vector<Instruction *> AtomicPortMem::UnderlyingInsts() {
+std::vector<Instruction *> AtomicPortMem::underlyingInsts() {
   if (Op) {
     return {Index->Load, Store, Op};
   }
   return {Index->Load, Store};
 }
 
-int PortBase::VectorizeFactor() {
-  return ShouldUnroll() ? Parent->getUnroll() : 1;
+int PortBase::vectorizeFactor() {
+  return shouldUnroll() ? Parent->getUnroll() : 1;
 }
 
-#define VISIT_IMPL(TYPE) void TYPE::Accept(dsa::DFGEntryVisitor *V) { V->Visit(this); }
+#define VISIT_IMPL(TYPE) void TYPE::accept(dsa::DFGEntryVisitor *V) { V->Visit(this); }
 VISIT_IMPL(DFGEntry)
 VISIT_IMPL(ComputeBody)
 VISIT_IMPL(Predicate)

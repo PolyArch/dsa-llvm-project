@@ -15,21 +15,22 @@ namespace xform {
  * \brief Eliminate temporal intrinsics when temporal is not supported.
  * \param F The function to be transformed.
  */
-void EliminateTemporal(Function &F);
+void eliminateTemporal(Function &F);
 
 /*!
  * \brief Inject DSA registers.
           These memory buffer will be used for register stickiness optimization.
  * \param F The function to be transformed.
  */
-std::vector<utils::StickyRegister> InjectDSARegisterFile(Function &F);
+std::vector<utils::StickyRegister> injectDSARegisterFile(Function &F);
 
 /*!
  * \brief Emit DFG to the given destination.
  * \param os Where the given DFG is emitted. If null, dump to the filename of
  * the given DFGFile.
  */
-void EmitDFG(raw_ostream &os, DFGFile *DF, std::vector<analysis::CoalMemoryInfo> &DSUs);
+void emitDFG(raw_ostream &OS, DFGFile *DF, std::vector<analysis::CoalMemoryInfo> &DSUs,
+             analysis::SpadInfo &SI);
 
 struct CodeGenContext {
   /*!
@@ -41,17 +42,25 @@ struct CodeGenContext {
    */
   const RegisterFile &Regs;
   /*!
-   * \brief The injected intrinsics.
+   * \brief Loop scalar analyzer.
    */
   ScalarEvolution &SE;
   /*!
-   * \brief The injected intrinsics.
+   * \brief SCEV expander.
    */
   SCEVExpander &SEE;
   /*!
+   * \brief Instruction domination.
+   */
+  DominatorTree *DT;
+  /*!
+   * \brief Loop information.
+   */
+  LoopInfo *LI;
+  /*!
    * \brief The injected intrinsics.
    */
-  std::vector<CallInst *> res;
+  std::vector<CallInst *> Res;
 
   /*!
    * \brief Implemeting the register to make it compatible with intrin_impl.
@@ -76,15 +85,15 @@ struct CodeGenContext {
     }
   };
 
-  CodeGenContext(IRBuilder<> *IB_, const RegisterFile &Regs_,
-                 ScalarEvolution &SE_, SCEVExpander &SEE_)
-      : IB(IB_), Regs(Regs_), SE(SE_), SEE(SEE_) {}
+  CodeGenContext(IRBuilder<> *IB, const RegisterFile &Regs, ScalarEvolution &SE, SCEVExpander &SEE,
+                 DominatorTree *DT, LoopInfo *LI) :
+    IB(IB), Regs(Regs), SE(SE), SEE(SEE), DT(DT), LI(LI) {}
 
   /*!
    * \brief Inject load/store instructions so that the compiler can
    * automatically analyze the stickiness.
    */
-  void InjectFusionHints(std::string Mnemonic, REG &a, REG &b, int c);
+  void injectFusionHints(std::string Mnemonic, REG &A, REG &B, int C);
 
   /*!
    * \brief Injector of intrinsic instructions.
@@ -93,39 +102,39 @@ struct CodeGenContext {
    * \param Args The argument of the instruction call.
    * \param ResTy The result of the instruction.
    */
-  void IntrinsicImpl(const std::string &Mnemonic,
+  void intrinsicImpl(const std::string &Mnemonic,
                      const std::string &OpConstrain,
                      const std::vector<Value *> &Args, Type *ResTy);
 
   /// Implementing the interfaces for intrinsic injection.
   /// @{
-  REG DIV(REG a, REG b) { return IB->CreateUDiv(a.value(IB), b.value(IB)); }
+  REG DIV(REG a, REG b) { return IB->CreateUDiv(a.value(IB), b.value(IB)); } // NOLINT
 
-  REG SUB(REG a, REG b) { return IB->CreateSub(a.value(IB), b.value(IB)); }
+  REG SUB(REG a, REG b) { return IB->CreateSub(a.value(IB), b.value(IB)); } // NOLINT
 
-  REG SHL(REG a, REG b) { return IB->CreateShl(a.value(IB), b.value(IB)); }
+  REG SHL(REG a, REG b) { return IB->CreateShl(a.value(IB), b.value(IB)); } // NOLINT
 
-  REG MUL(REG a, REG b) { return IB->CreateMul(a.value(IB), b.value(IB)); }
+  REG MUL(REG a, REG b) { return IB->CreateMul(a.value(IB), b.value(IB)); } // NOLINT
 
-  void INTRINSIC_DRI(std::string Mnemonic, REG &a, REG b, int c) {
-    IntrinsicImpl(Mnemonic, "=r,r,i", {b.value(IB), IB->getInt64(c)},
+  void INTRINSIC_DRI(std::string Mnemonic, REG &A, REG B, int C) { // NOLINT
+    intrinsicImpl(Mnemonic, "=r,r,i", {B.value(IB), IB->getInt64(C)},
                   IB->getInt64Ty());
-    a.value(IB) = res.back();
+    A.value(IB) = Res.back();
   }
 
-  void INTRINSIC_RRI(std::string Mnemonic, REG a, REG b, int c) {
-    InjectFusionHints(Mnemonic, a, b, c);
-    IntrinsicImpl(Mnemonic, "r,r,i",
-                  {a.value(IB), b.value(IB), IB->getInt64(c)}, IB->getVoidTy());
+  void INTRINSIC_RRI(std::string Mnemonic, REG A, REG B, int C) { // NOLINT
+    injectFusionHints(Mnemonic, A, B, C);
+    intrinsicImpl(Mnemonic, "r,r,i",
+                  {A.value(IB), B.value(IB), IB->getInt64(C)}, IB->getVoidTy());
   }
 
-  void INTRINSIC_RI(std::string Mnemonic, REG a, int b) {
-    IntrinsicImpl(Mnemonic, "r,i", {a.value(IB), IB->getInt64(b)},
+  void INTRINSIC_RI(std::string Mnemonic, REG A, int B) { // NOLINT
+    intrinsicImpl(Mnemonic, "r,i", {A.value(IB), IB->getInt64(B)},
                   IB->getVoidTy());
   }
 
-  void INTRINSIC_R(std::string Mnemonic, REG a) {
-    IntrinsicImpl(Mnemonic, "r", {a.value(IB)}, IB->getVoidTy());
+  void INTRINSIC_R(std::string Mnemonic, REG A) { // NOLINT
+    intrinsicImpl(Mnemonic, "r", {A.value(IB)}, IB->getVoidTy());
   }
   /// @}
 
@@ -139,16 +148,23 @@ struct CodeGenContext {
  * \param Start Where the config is injected.
  * \param End Where the wait all is injected.
  */
-void InjectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
+void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
                          Instruction *Start, Instruction *End);
 
 /*!
  * \brief Inject stream intrinsics.
  * \param CGC The context of code injection.
  */
-void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
+void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
                             std::vector<analysis::CoalMemoryInfo> &CMIs,
-                            analysis::SpadInfo &SI);
+                            analysis::SpadInfo &SI, analysis::DFGAnalysisResult &DAR);
+
+/*!
+ *  \brief Erase offloaded instructions.
+ *  \param DF
+ *  \param CGC
+ */
+void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC);
 
 } // namespace xform
 } // namespace dsa
