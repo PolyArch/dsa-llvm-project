@@ -1,3 +1,4 @@
+#include "llvm/ADT/BreadthFirstIterator.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InlineAsm.h"
@@ -60,7 +61,15 @@ bool CanBeAEntry(Value *Val) {
   if (auto *Call = dyn_cast<CallInst>(Inst)) {
     return Call->getCalledFunction()->getName() == "sqrt";
   }
-  return Inst->isBinaryOp() || isa<CmpInst>(Inst) || isa<SelectInst>(Inst);
+  if (isa<CmpInst>(Inst)) {
+    for (auto *User : Inst->users()) {
+      if (isa<BranchInst>(User)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return Inst->isBinaryOp() || isa<SelectInst>(Inst);
 }
 
 Value *CeilDiv(Value *A, Value *B, Instruction *InsertBefore) {
@@ -145,7 +154,7 @@ BasicBlock *FindLoopPrologue(Loop *L) {
   assert(BI);
   for (int i = 0; i < (int) BI->getNumSuccessors(); ++i) { // NOLINT
     auto *DstBB = BI->getSuccessor(i);
-    LLVM_DEBUG(dbgs() << "Inject stream wait fence " << DstBB->getName()
+    LLVM_DEBUG(DSA_INFO << "Inject stream wait fence " << DstBB->getName()
                       << "\n");
     if (!L->getBlocksSet().count(DstBB)) {
       return DstBB;
@@ -224,7 +233,7 @@ raw_ostream &operator<<(raw_ostream &OS, DFGEntry &DE) {
   OS << "# [" << KindStr[(int) DE.Kind] << "]: DFG" << DE.Parent->ID << " Entry"
      << DE.ID << "\n";
   int i = 0; // NOLINT
-  auto Insts = DE.UnderlyingInsts();
+  auto Insts = DE.underlyingInsts();
   for (auto *Elem : Insts) {
     OS << "# Inst";
     if (Insts.size() != 1) {

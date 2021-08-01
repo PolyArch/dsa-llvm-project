@@ -114,7 +114,7 @@ public:
   /*!
    * \brief Entrance of the visitor pattern.
    */
-  virtual void Accept(dsa::DFGVisitor *);
+  virtual void accept(dsa::DFGVisitor *);
 
   /// TODO(@were): Decouple and remove all these.
   // {
@@ -164,6 +164,7 @@ public:
 /// The class holds the DFG information
 class DFGFile {
 
+public:
   std::string FileName;
   Function &Func;
   Instruction *Config, *Fence;
@@ -174,7 +175,6 @@ class DFGFile {
 
   bool AllInitialized{false};
 
-public:
   friend class DFGBase;
   friend class DedicatedDFG;
   friend class TemporalDFG;
@@ -203,14 +203,10 @@ public:
 
   /// Add the given DFG to this file
   void addDFG(DFGBase *DFG);
-  /// Erase all the instructions offloaded to CGRA
-  void EraseOffloadedInstructions();
   /// Get the current context
   LLVMContext &getCtx();
-  /// Allocate addresses on the scratch pad
-  void InspectSPADs();
 
-  template <typename T> std::vector<T *> DFGFilter() {
+  template <typename T> std::vector<T *> DFGFilter() { // NOLINT
     return TypeFilter<T>(DFGs);
   }
 };
@@ -232,7 +228,7 @@ public:
   /// Return the blocks of the DFG
   SmallVector<BasicBlock *, 0> getBlocks() override;
   /// Dump the DFG to text format
-  void dump(std::ostringstream &os) override;
+  void dump(std::ostringstream &OS) override;
   /// Check if this given instruction is in the DFG
   bool Contains(Instruction *) override;
   bool Contains(BasicBlock *) override;
@@ -247,7 +243,7 @@ public:
   /*!
    * \brief Entrance of the visitor pattern.
    */
-  virtual void Accept(dsa::DFGVisitor *) override;
+  virtual void accept(dsa::DFGVisitor *) override;
 
   static bool classof(const DFGBase *DB) { return DB->getKind() == Temporal; }
 };
@@ -329,7 +325,7 @@ public:
   /*!
    * \brief Entrance of the visitor pattern.
    */
-  virtual void Accept(dsa::DFGVisitor *) override;
+  virtual void accept(dsa::DFGVisitor *) override;
 
   static bool classof(const DFGBase *DB) {
     return DB->getKind() == Dedicated || DB->getKind() == DataMove;
