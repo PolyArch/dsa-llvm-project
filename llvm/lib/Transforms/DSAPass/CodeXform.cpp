@@ -731,6 +731,7 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
     }
     auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Loops[0].Base), IB->getInt64(1));
     Repeat = CeilDiv(Dim0, IB->getInt64(Unroll), IB);
+    LOG(CODEGEN) << *Repeat;
     break;
   }
   case 2: {
@@ -752,6 +753,7 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
       }
     } else {
       Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
+      LOG(CODEGEN) << *Repeat;
     }
     break;
   }
@@ -772,7 +774,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
                              const std::vector<analysis::LinearInfo> &Loops,
                              int Port, int Unroll) {
     CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
-    int N = LI.partialInvariant();
+    int N = LI.Coef.empty() ? Loops.size() : LI.partialInvariant();
     auto CR = InjectComputedRepeat(CGC, Loops, N, Unroll);
     auto *Repeat = CR.first;
     auto *Stretch = CR.second;
@@ -825,7 +827,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     }
     case 1: {
       auto *N1D = N[0];
-      auto *Stride1D = Stride[0];
+      auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
       CGC.INSTANTIATE_1D_STREAM(Start, Stride1D, N1D, Port, P, DSA_Access, MO, MT, DType, 0);
       LOG(CODEGEN)
         << "[1-d Linear] Start: " << *Start << ", Stride: " << *Stride1D << ", N: " << *N1D
@@ -835,7 +837,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     }
     case 2: {
       auto *N1D = N[0];
-      auto *Stride1D = Stride[0];
+      auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
       // TODO(@were): Make assumption check!
       Value *Stretch = IB->getInt64(0);
       if (!Loops[i].Coef.empty()) {
@@ -856,6 +858,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     case 3: {
       // TODO(@were): Support 3D stretch!
       auto *Zero = IB->getInt64(0);
+      auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
       auto *Stride2D = IB->CreateSDiv(Stride[1], IB->getInt64(DType));
       auto *Stride3D = IB->CreateSDiv(Stride[2], IB->getInt64(DType));
       if (MO == DMO_Read && BuffetIdx >= 0 && BuffetIdx < (int) SI.Buffet.size()) {
@@ -865,22 +868,22 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
         int LoadPort = std::get<3>(SI.Buffet[BuffetIdx]);
         int StorePort = std::get<4>(SI.Buffet[BuffetIdx]);
         // Skip the middle dimension.
-        CGC.INSTANTIATE_2D_STREAM(Start, Stride[0], N[0], Stride3D, Zero, N[2],
+        CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N[0], Stride3D, Zero, N[2],
                                   LoadPort, P, DSA_Access, MO, MT, DType, 0);
         CGC.SS_BUFFET_ALLOC(StartSpad, StartSpad + BufferSize);
         LOG(CODEGEN) << "Allocate Buffet: [" << StartSpad << ", " << StartSpad + BufferSize << ")";
-        CGC.INSTANTIATE_2D_STREAM(StartSpad, Stride[0], N[0], Stride3D, Zero, N[2],
+        CGC.INSTANTIATE_2D_STREAM(StartSpad, Stride1D, N[0], Stride3D, Zero, N[2],
                                   StorePort, P, DSA_Access, DMO_Write, DMT_SPAD, DType, 0);
         LOG(CODEGEN)
-          << "[2-d Linear] Start: " << StartSpad << ", S1D: " << *Stride[0] << ", N1D: " << *N[0]
+          << "[2-d Linear] Start: " << StartSpad << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
           << ", S2D: " << *Stride2D << ", N2D: " << *N[2] << ", Stride2D: " << *Stride3D
           << ", DType: " << DType << ", Port: " << Port << " -> Write Buffet";
         CGC.SS_BUFFET_ALLOC(StartSpad, StartSpad + BufferSize);
-        CGC.INSTANTIATE_3D_STREAM(StartSpad, Stride[0], N[0], Stride2D, Zero, N[1],
+        CGC.INSTANTIATE_3D_STREAM(StartSpad, Stride1D, N[0], Stride2D, Zero, N[1],
                                   Zero, Zero, Zero, Zero, Stride3D, N[2],
                                   Port, P, DSA_Access, MO, DMT_SPAD, DType, 0);
         LOG(CODEGEN)
-          << "[3-d Linear] Start: " << StartSpad << ", S1D: " << *Stride[0] << ", N1D: " << *N[0]
+          << "[3-d Linear] Start: " << StartSpad << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
           << ", N2D: " << *N[1] << ", S2D: " << *Stride2D << ", N3D: " << *N[2]
           << ", Stride3D: " << *Stride3D << ", DType: " << DType
           << ", Port: " << Port << " -> Read Buffet";
@@ -888,11 +891,11 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
         LOG(CODEGEN) << "Deallocate Buffet!";
         break;
       }
-      CGC.INSTANTIATE_3D_STREAM(Start, Stride[0], N[0], Stride2D, Zero, N[1],
+      CGC.INSTANTIATE_3D_STREAM(Start, Stride1D, N[0], Stride2D, Zero, N[1],
                                 Zero, Zero, Zero, Zero, Stride3D, N[2],
                                 Port, P, DSA_Access, MO, MT, DType, 0);
       LOG(CODEGEN)
-        << "[3-d Linear] Start: " << *Start << ", S1D: " << *Stride[0] << ", N1D: " << *N[0]
+        << "[3-d Linear] Start: " << *Start << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
         << ", N2D: " << *N[1] << ", S2D: " << *Stride2D << ", N3D: " << *N[2]
         << ", Stride3D: " << *Stride3D << ", DType: " << DType
         << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
@@ -910,7 +913,11 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
   }
   int PI = IdxLI.partialInvariant();
   IdxLI.Coef.erase(IdxLI.Coef.begin(), IdxLI.Coef.begin() + PI);
-  LoopLI.erase(LoopLI.begin(), LoopLI.begin() + PI);
+  if (IdxLI.Coef.empty()) {
+    LoopLI.clear();
+  } else {
+    LoopLI.erase(LoopLI.begin(), LoopLI.begin() + PI);
+  }
   if (MaxOffset) {
     LoopLI.insert(LoopLI.begin(), analysis::LinearInfo());
     LoopLI.front().Base = CGC.SE.getConstant(CGC.IB->getInt64(MaxOffset / DType));
@@ -981,6 +988,10 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
             LOG(CODEGEN) << "Recurrence should not have inner repeat";
             return;
           }
+          if (FLI.Coef.size() != 2) {
+            LOG(CODEGEN) << "Not a two dimension update and reduce";
+            return;
+          }
           // Outer should not be stretched!
           if (!FLI.Coef.back().Coef.empty()) {
             LOG(CODEGEN) << "Recurrence should not be stretched";
@@ -988,6 +999,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
           }
           if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(FLI.Coef[1].Base))) {
             if (O->getSExtValue()) {
+              LOG(CODEGEN) << "Not a repeated update!";
               return;
             }
           }
