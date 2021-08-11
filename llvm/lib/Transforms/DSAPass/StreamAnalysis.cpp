@@ -183,13 +183,13 @@ struct StreamAnalysisPass : public FunctionPass {
           auto *Index = Load->getPointerOperand();
           CHECK(SE->isSCEVable(Index->getType()));
           auto LI = analyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
-          LOG(LOOP) << LI.toString();
+          DSA_LOG(LOOP) << LI.toString();
         }
       }
     }
     for (auto *L : Loops) {
       auto LI = analyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
-      LOG(LOOP) << LI.toString();
+      DSA_LOG(LOOP) << LI.toString();
     }
   }
 
@@ -197,7 +197,7 @@ struct StreamAnalysisPass : public FunctionPass {
     Loops.insert(Loops.begin(), L);
     if (L->empty()) {
       if (GetUnrollMetadata(L->getLoopID(), "llvm.loop.ss.dedicated")) {
-        LOG(LOOP) << "Offload: " << *L;
+        DSA_LOG(LOOP) << "Offload: " << *L;
         auto I = Loops.begin();
         decltype(Loops) Slice;
         while (I < Loops.end()) {
@@ -211,7 +211,7 @@ struct StreamAnalysisPass : public FunctionPass {
           } else {
             OSS << "Non-Canonical";
           }
-          LOG(LOOP) << "Loop: " << *(*I) << " " << S;
+          DSA_LOG(LOOP) << "Loop: " << *(*I) << " " << S;
           if (GetUnrollMetadata((*I)->getLoopID(), "llvm.loop.ss.stream")) {
             Slice = decltype(Loops)(Loops.begin(), I + 1);
             break;
