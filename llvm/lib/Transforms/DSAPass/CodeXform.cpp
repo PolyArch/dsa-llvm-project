@@ -731,7 +731,7 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
     }
     auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Loops[0].Base), IB->getInt64(1));
     Repeat = CeilDiv(Dim0, IB->getInt64(Unroll), IB);
-    LOG(CODEGEN) << *Repeat;
+    DSA_LOG(CODEGEN) << *Repeat;
     break;
   }
   case 2: {
@@ -753,7 +753,7 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
       }
     } else {
       Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
-      LOG(CODEGEN) << *Repeat;
+      DSA_LOG(CODEGEN) << *Repeat;
     }
     break;
   }
@@ -829,7 +829,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       auto *N1D = N[0];
       auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
       CGC.INSTANTIATE_1D_STREAM(Start, Stride1D, N1D, Port, P, DSA_Access, MO, MT, DType, 0);
-      LOG(CODEGEN)
+      DSA_LOG(CODEGEN)
         << "[1-d Linear] Start: " << *Start << ", Stride: " << *Stride1D << ", N: " << *N1D
         << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
         << (MO == DMO_Read ? ", Read" : ", Write");
@@ -848,7 +848,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N1D, Stride2D, Stretch,
                                 N2D, Port, P, DSA_Access, MO, MT, DType,
                                 0);
-      LOG(CODEGEN)
+      DSA_LOG(CODEGEN)
         << "[2-d Linear] Start: " << *Start << ", S1D: " << *Stride1D << ", N: " << *N1D
         << ", S2D: " << *Stride2D << ", Stretch: " << *Stretch << ", M: " << *N2D
         << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
@@ -871,10 +871,10 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
         CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N[0], Stride3D, Zero, N[2],
                                   LoadPort, P, DSA_Access, MO, MT, DType, 0);
         CGC.SS_BUFFET_ALLOC(StartSpad, StartSpad + BufferSize);
-        LOG(CODEGEN) << "Allocate Buffet: [" << StartSpad << ", " << StartSpad + BufferSize << ")";
+        DSA_LOG(CODEGEN) << "Allocate Buffet: [" << StartSpad << ", " << StartSpad + BufferSize << ")";
         CGC.INSTANTIATE_2D_STREAM(StartSpad, Stride1D, N[0], Stride3D, Zero, N[2],
                                   StorePort, P, DSA_Access, DMO_Write, DMT_SPAD, DType, 0);
-        LOG(CODEGEN)
+        DSA_LOG(CODEGEN)
           << "[2-d Linear] Start: " << StartSpad << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
           << ", S2D: " << *Stride2D << ", N2D: " << *N[2] << ", Stride2D: " << *Stride3D
           << ", DType: " << DType << ", Port: " << Port << " -> Write Buffet";
@@ -882,19 +882,19 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
         CGC.INSTANTIATE_3D_STREAM(StartSpad, Stride1D, N[0], Stride2D, Zero, N[1],
                                   Zero, Zero, Zero, Zero, Stride3D, N[2],
                                   Port, P, DSA_Access, MO, DMT_SPAD, DType, 0);
-        LOG(CODEGEN)
+        DSA_LOG(CODEGEN)
           << "[3-d Linear] Start: " << StartSpad << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
           << ", N2D: " << *N[1] << ", S2D: " << *Stride2D << ", N3D: " << *N[2]
           << ", Stride3D: " << *Stride3D << ", DType: " << DType
           << ", Port: " << Port << " -> Read Buffet";
         CGC.SS_BUFFET_DEALLOC();
-        LOG(CODEGEN) << "Deallocate Buffet!";
+        DSA_LOG(CODEGEN) << "Deallocate Buffet!";
         break;
       }
       CGC.INSTANTIATE_3D_STREAM(Start, Stride1D, N[0], Stride2D, Zero, N[1],
                                 Zero, Zero, Zero, Zero, Stride3D, N[2],
                                 Port, P, DSA_Access, MO, MT, DType, 0);
-      LOG(CODEGEN)
+      DSA_LOG(CODEGEN)
         << "[3-d Linear] Start: " << *Start << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
         << ", N2D: " << *N[1] << ", S2D: " << *Stride2D << ", N3D: " << *N[2]
         << ", Stride3D: " << *Stride3D << ", DType: " << DType
@@ -932,17 +932,17 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
         IdxLI.Coef.push_back(ZeroDim);
       }
     }
-    LOG(SLP) << "Info After SLP: " << IdxLI.toString();
+    DSA_LOG(SLP) << "Info After SLP: " << IdxLI.toString();
     for (int i = 0; i < (int) LoopLI.size(); ++i) { // NOLINT
-      LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
+      DSA_LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
     }
   }
   auto Fused =  analysis::fuseInnerDimensions(IdxLI, LoopLI, DType, Unroll, 0, CGC.IB, CGC.SE);
   IdxLI = Fused.first;
   LoopLI = Fused.second;
-  LOG(SLP) << "Info After Dim Coal: " << IdxLI.toString();
+  DSA_LOG(SLP) << "Info After Dim Coal: " << IdxLI.toString();
   for (int i = 0; i < (int) LoopLI.size(); ++i) { // NOLINT
-    LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
+    DSA_LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
   }
   LinearInstantiation(IdxLI, LoopLI, Port, MO, P, SI, BuffetIdx, DType);
 }
@@ -974,7 +974,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
         auto *Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
         auto DType = MP->Load->getType()->getScalarSizeInBits() / 8;
         if (Ptr0 == Ptr1) {
-          LOG(CODEGEN) << "Recurrencing: \n" << *MP->Load << "\n" << *PM->Store;
+          DSA_LOG(CODEGEN) << "Recurrencing: \n" << *MP->Load << "\n" << *PM->Store;
           const auto *SCEV = SE.getSCEV(Ptr0);
           auto Analyzed = dsa::analysis::analyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
           auto Fused =
@@ -985,21 +985,21 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
           auto &LoopN = Fused.second;
           // No repeat!
           if (FLI.partialInvariant() != 0) {
-            LOG(CODEGEN) << "Recurrence should not have inner repeat";
+            DSA_LOG(CODEGEN) << "Recurrence should not have inner repeat";
             return;
           }
           if (FLI.Coef.size() != 2) {
-            LOG(CODEGEN) << "Not a two dimension update and reduce";
+            DSA_LOG(CODEGEN) << "Not a two dimension update and reduce";
             return;
           }
           // Outer should not be stretched!
           if (!FLI.Coef.back().Coef.empty()) {
-            LOG(CODEGEN) << "Recurrence should not be stretched";
+            DSA_LOG(CODEGEN) << "Recurrence should not be stretched";
             return;
           }
           if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(FLI.Coef[1].Base))) {
             if (O->getSExtValue()) {
-              LOG(CODEGEN) << "Not a repeated update!";
+              DSA_LOG(CODEGEN) << "Not a repeated update!";
               return;
             }
           }
@@ -1126,11 +1126,12 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
         auto *Num = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
                                   IB->getInt64(IBits / 8));
         auto *GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
+        auto MT = SI.isSpad(GEP->getOperand(0)) ? DMT_SPAD : DMT_DMA;
         CGC.INSTANTIATE_1D_INDIRECT(
             Cur->SoftPortNum, Cur->Load->getType()->getScalarSizeInBits() / 8,
             Cur->IndexOutPort, Cur->Index->Load->getType()->getScalarSizeInBits() / 8,
             GEP->getOperand(0), Cur->Load->getType()->getScalarSizeInBits() / 8,
-            Num, DMT_DMA, DMO_Read);
+            Num, MT, DMO_Read);
 
         // TODO: Support indirect read on the SPAD(?)
         Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)DMT_DMA]);
@@ -1247,16 +1248,16 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
         }
       }
       CHECK(OP);
-      LOG(CTRL_SIGNAL) << CS->Controlled->dump();
-      LOG(CTRL_SIGNAL) << OP->dump();
+      DSA_LOG(CTRL_SIGNAL) << CS->Controlled->dump();
+      DSA_LOG(CTRL_SIGNAL) << OP->dump();
       Value *Outer = IB->getInt64(1);
       bool UseLevel = false;
       for (int i = 1; i < (int) DLI.TripCount.size(); ++i) { // NOLINT
-        LOG(CTRL_SIGNAL) << "Loop: " << *DLI.LoopNest[i];
+        DSA_LOG(CTRL_SIGNAL) << "Loop: " << *DLI.LoopNest[i];
         auto *TripCnt = IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[i].Base), IB->getInt64(1));
         UseLevel = DLI.LoopNest[i]->contains(OP->underlyingInst());
         if (UseLevel) {
-          LOG(CTRL_SIGNAL) << "Outer!";
+          DSA_LOG(CTRL_SIGNAL) << "Outer!";
           Outer = IB->CreateMul(Outer, TripCnt);
         } else {
           Rep = IB->CreateMul(Rep, TripCnt);
@@ -1423,7 +1424,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
           auto *Inst = CB->underlyingInst();
           for (int j = 0; j < (int) Inst->getNumOperands(); ++j) { // NOLINT
             if (!DFG->InThisDFG(Inst->getOperand(j))) {
-              LOG(CODEGEN)
+              DSA_LOG(CODEGEN)
                 << "[Const Sream] (" << *Inst->getOperand(j) << ") * ("
                 << *N << ") -> " << APM->OperandPort;
               CGC.SS_CONST(APM->OperandPort, Inst->getOperand(j), N);
@@ -1438,7 +1439,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       CGC.INSTANTIATE_1D_INDIRECT(APM->SoftPortNum, DType, IdxPort, IdxType,
                                   GEP->getOperand(0), DType,
                                   N, DMT_SPAD, DMO_Add);
-      LOG(CODEGEN)
+      DSA_LOG(CODEGEN)
         << "[AtomicSpad] WritePort: " << APM->SoftPortNum << ", DType: " << DType
         << ", IdxPort: " << IdxPort << ", IdxType: " << IdxType << ", Start: " << GEP->getOperand(0)
         << ", N: " << *N << ", SPAD Add";
@@ -1505,9 +1506,9 @@ void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
 
       auto F = [&Unique](Instruction *Inst) {
         bool SS = false;
-        LOG(ERASE) << *Inst;
+        DSA_LOG(ERASE) << *Inst;
         for (auto *User : Inst->users()) {
-          LOG(ERASE) << "user: " << *User;
+          DSA_LOG(ERASE) << "user: " << *User;
           if (auto *Call = dyn_cast<CallInst>(User)) {
             if (auto *IA = dyn_cast<InlineAsm>(Call->getCalledOperand())) {
               SS |= IA->getAsmString().find("ss_") == 0;
@@ -1516,7 +1517,7 @@ void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
         }
         for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
           auto *Use = Inst->getOperand(i);
-          LOG(ERASE) << "use: " << *Use;
+          DSA_LOG(ERASE) << "use: " << *Use;
           if (auto *Call = dyn_cast<CallInst>(Use)) {
             if (auto *IA = dyn_cast<InlineAsm>(Call->getCalledOperand())) {
               SS |= IA->getAsmString().find("ss_") == 0;
@@ -1525,7 +1526,7 @@ void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
         }
         if (!SS) {
           Unique.insert(Inst);
-          LOG(ERASE) << "DELETE: " << *Inst;
+          DSA_LOG(ERASE) << "DELETE: " << *Inst;
         }
       };
 
@@ -1568,7 +1569,7 @@ void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
         }
 
       } else {
-        LOG(ERASE) << "No barrier required!";
+        DSA_LOG(ERASE) << "No barrier required!";
       }
     } else if (auto *TD = dyn_cast<TemporalDFG>(DFG)) {
       TD->End->eraseFromParent();
@@ -1581,7 +1582,7 @@ void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
     Inst->eraseFromParent();
   }
 
-  LOG(ERASE) << "Rip out all original instrucitons";
+  DSA_LOG(ERASE) << "Rip out all original instrucitons";
 }
 
 } // namespace xform
