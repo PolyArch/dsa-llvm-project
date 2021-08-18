@@ -1294,7 +1294,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       // If this stream is for the predicate, we require users to put sentinal
       // at the end the next word of the array.
       int DType = CMP->Load->getType()->getScalarSizeInBits() / 8;
-      CGC.INSTANTIATE_1D_STREAM(CMP->Start, DType, CMP->TripCnt,
+      CGC.INSTANTIATE_1D_STREAM(CMP->Start, IB->getInt64(1), CMP->TripCnt,
                                 CMP->SoftPortNum, 0, DSA_Access, DMO_Read,
                                 DMT_DMA, DType, 0);
 
