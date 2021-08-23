@@ -594,7 +594,7 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
             if (!Offset.count(Alloc)) {
               int Size = AT->getNumElements() * AT->getElementType()->getScalarSizeInBits() / 8;
               Offset[Alloc] = Total;
-              LOG(SPAD) << *Alloc << ": " << Total;
+              DSA_LOG(SPAD) << *Alloc << ": " << Total;
               Total += Size;
             }
           }
@@ -637,7 +637,7 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
                 int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
                 int SLPMul = DAR.CMI[i].Clusters[Belong].size();
                 int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType * SLPMul;
-                LOG(BUFFET)
+                DSA_LOG(BUFFET)
                   << Buffet.size() << ": " << MP->dump() << ", "
                   << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << SLPMul << " * " << DType
                   << " * 2 = " << BufferSize << "\n" << LI.toString() << "\n"
@@ -875,11 +875,8 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
       DLI.LoopNest = LoopNest;
       for (int I = 0; I < (int) LoopNest.size(); ++I) {
         auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[I]);
-        if (isa<SCEVCouldNotCompute>(NSCEV)) {
-          DLI.TripCount.push_back(LinearInfo());
-        } else {
-          DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest));
-        }
+        CHECK(!isa<SCEVCouldNotCompute>(NSCEV));
+        DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest));
       }
     }
 
@@ -910,7 +907,7 @@ int64_t indexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
   }
   for (int J = 0; J < (int) A.Coef.size(); ++J) {
     if (A.Coef[J].Base != B.Coef[J].Base) {
-      LOG(COAL) << *SE.getEqualPredicate(A.Coef[J].Base, B.Coef[J].Base);
+      DSA_LOG(COAL) << *SE.getEqualPredicate(A.Coef[J].Base, B.Coef[J].Base);
       SameDims = false;
     }
   }
