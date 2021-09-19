@@ -4575,6 +4575,7 @@ unsigned AtomicExpr::getNumSubExprs(AtomicOp Op) {
   case AO__c11_atomic_fetch_max:
   case AO__c11_atomic_fetch_min:
   case AO__atomic_fetch_add:
+  case AO__atomic_fetch_fadd:
   case AO__atomic_fetch_sub:
   case AO__atomic_fetch_and:
   case AO__atomic_fetch_or:

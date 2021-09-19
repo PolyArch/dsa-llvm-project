@@ -165,6 +165,8 @@ static const char *const LLVMLoopVectorizeFollowupVectorized =
     "llvm.loop.vectorize.followup_vectorized";
 static const char *const LLVMLoopVectorizeFollowupEpilogue =
     "llvm.loop.vectorize.followup_epilogue";
+static const char *const LLVMLoopVectorizeIsEpilogue =
+    "llvm.loop.vectorize_is_epilogue";
 /// @}
 
 STATISTIC(LoopsVectorized, "Number of loops vectorized");
@@ -2700,7 +2702,14 @@ PHINode *InnerLoopVectorizer::createInductionVariable(Loop *L, Value *Start,
   setDebugLocFromInst(Builder, OldInst);
 
   // Create i+1 and fill the PHINode.
-  Value *Next = Builder.CreateAdd(Induction, Step, "index.next");
+  /**
+   * ! GemForge
+   * We should be able to say this is nsw/nuw?
+   * Ideally we would like to copy nsw/nuw from the original add instruction.
+   */
+  bool HasNSW = true;
+  bool HasNUW = true;
+  Value *Next = Builder.CreateAdd(Induction, Step, "index.next", HasNUW, HasNSW);
   Induction->addIncoming(Start, L->getLoopPreheader());
   Induction->addIncoming(Next, Latch);
   // Create the compare.
@@ -8531,6 +8540,12 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     // Mark the loop as already vectorized to avoid vectorizing again.
     Hints.setAlreadyVectorized();
   }
+
+  /**
+   * ! GemForge
+   * Mark the epilogue loop
+   */
+  addStringMetadataToLoop(L, LLVMLoopVectorizeIsEpilogue);
 
   assert(!verifyFunction(*L->getHeader()->getParent(), &dbgs()));
   return true;

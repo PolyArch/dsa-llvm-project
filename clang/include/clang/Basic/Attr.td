@@ -1634,6 +1634,12 @@ def NoInline : InheritableAttr {
   let SimpleHandler = 1;
 }
 
+def NoLoopIdiom : InheritableAttr {
+  let Spellings = [Clang<"noloopidiom">, Declspec<"noloopidiom">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [Undocumented];
+}
+
 def NoMips16 : InheritableAttr, TargetSpecificAttr<TargetMips32> {
   let Spellings = [GCC<"nomips16">];
   let Subjects = SubjectList<[Function], ErrorDiag>;

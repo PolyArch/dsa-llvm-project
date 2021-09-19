@@ -3102,6 +3102,9 @@ include "X86InstrSystem.td"
 include "X86InstrCompiler.td"
 include "X86InstrVecCompiler.td"
 
+// SSP Instructions and Pat Patterns
+include "X86InstrSSP.td"
+
 //===----------------------------------------------------------------------===//
 // Assembler Mnemonic Aliases
 //===----------------------------------------------------------------------===//

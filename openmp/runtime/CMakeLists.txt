@@ -271,8 +271,11 @@ if(LIBOMP_STATS)
 endif()
 
 # Shared library can be switched to a static library
-set(LIBOMP_ENABLE_SHARED TRUE CACHE BOOL
-  "Shared library instead of static library?")
+# Expose this to user.
+if(NOT LIBOMP_ENABLE_SHARED)
+  set(LIBOMP_ENABLE_SHARED TRUE CACHE BOOL
+    "Shared library instead of static library?")
+endif()
 
 if(WIN32 AND NOT LIBOMP_ENABLE_SHARED)
   libomp_error_say("Static libraries requested but not available on Windows")

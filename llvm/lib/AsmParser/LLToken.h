@@ -203,6 +203,7 @@ enum Kind {
   kw_nofree,
   kw_noimplicitfloat,
   kw_noinline,
+  kw_noloopidiom,
   kw_norecurse,
   kw_nonlazybind,
   kw_nomerge,

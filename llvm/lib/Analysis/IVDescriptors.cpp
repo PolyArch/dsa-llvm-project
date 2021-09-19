@@ -202,7 +202,11 @@ bool RecurrenceDescriptor::AddReductionVar(PHINode *Phi, RecurrenceKind Kind,
 
   // Obtain the reduction start value from the value that comes from the loop
   // preheader.
-  Value *RdxStart = Phi->getIncomingValueForBlock(TheLoop->getLoopPreheader());
+  /**
+   * ! There may be no preheader for this loop.
+   * ! Use predecessor instead.
+   */
+  Value *RdxStart = Phi->getIncomingValueForBlock(TheLoop->getLoopPredecessor());
 
   // ExitInstruction is the single value which is used outside the loop.
   // We only allow for a single reduction value to be used outside the loop.
@@ -1147,8 +1151,12 @@ bool InductionDescriptor::isInductionPHI(
     return false;
   }
 
+  /**
+   * ! There may be no preheader for this loop.
+   * ! Use predecessor.
+   */
   Value *StartValue =
-      Phi->getIncomingValueForBlock(AR->getLoop()->getLoopPreheader());
+      Phi->getIncomingValueForBlock(AR->getLoop()->getLoopPredecessor());
 
   BasicBlock *Latch = AR->getLoop()->getLoopLatch();
   if (!Latch)

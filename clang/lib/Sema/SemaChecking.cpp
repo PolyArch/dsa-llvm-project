@@ -4657,6 +4657,7 @@ ExprResult Sema::BuildAtomicExpr(SourceRange CallRange, SourceRange ExprRange,
              Op == AtomicExpr::AO__atomic_exchange_n ||
              Op == AtomicExpr::AO__atomic_compare_exchange_n;
   bool IsAddSub = false;
+  bool IsFAddSub = false;
 
   switch (Op) {
   case AtomicExpr::AO__c11_atomic_init:
@@ -4681,6 +4682,9 @@ ExprResult Sema::BuildAtomicExpr(SourceRange CallRange, SourceRange ExprRange,
     Form = Copy;
     break;
 
+  case AtomicExpr::AO__atomic_fetch_fadd:
+    IsFAddSub = true;
+    LLVM_FALLTHROUGH;
   case AtomicExpr::AO__c11_atomic_fetch_add:
   case AtomicExpr::AO__c11_atomic_fetch_sub:
   case AtomicExpr::AO__opencl_atomic_fetch_add:
@@ -4798,9 +4802,14 @@ ExprResult Sema::BuildAtomicExpr(SourceRange CallRange, SourceRange ExprRange,
   // For an arithmetic operation, the implied arithmetic must be well-formed.
   if (Form == Arithmetic) {
     // gcc does not enforce these rules for GNU atomics, but we do so for sanity.
-    if (IsAddSub && !ValType->isIntegerType()
+    if (IsAddSub && !IsFAddSub && !ValType->isIntegerType()
         && !ValType->isPointerType()) {
       Diag(ExprRange.getBegin(), diag::err_atomic_op_needs_atomic_int_or_ptr)
+          << IsC11 << Ptr->getType() << Ptr->getSourceRange();
+      return ExprError();
+    }
+    if (IsAddSub && IsFAddSub && !ValType->isFloatingType()) {
+      Diag(ExprRange.getBegin(), diag::err_atomic_op_needs_atomic_fp)
           << IsC11 << Ptr->getType() << Ptr->getSourceRange();
       return ExprError();
     }
@@ -4936,9 +4945,13 @@ ExprResult Sema::BuildAtomicExpr(SourceRange CallRange, SourceRange ExprRange,
                                  ExprRange.getBegin());
           }
           Ty = ByValType;
-        } else if (Form == Arithmetic)
-          Ty = Context.getPointerDiffType();
-        else {
+        } else if (Form == Arithmetic) {
+          // fadd should have value type.
+          if (Op == AtomicExpr::AO__atomic_fetch_fadd)
+            Ty = ValType;
+          else
+            Ty = Context.getPointerDiffType();
+        } else {
           Expr *ValArg = APIOrderedArgs[i];
           // The value pointer is always dereferenced, a nullptr is undefined.
           CheckNonNullArgument(*this, ValArg, ExprRange.getBegin());
