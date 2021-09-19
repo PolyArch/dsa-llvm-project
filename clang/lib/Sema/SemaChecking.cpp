@@ -4657,11 +4657,7 @@ ExprResult Sema::BuildAtomicExpr(SourceRange CallRange, SourceRange ExprRange,
              Op == AtomicExpr::AO__atomic_exchange_n ||
              Op == AtomicExpr::AO__atomic_compare_exchange_n;
   bool IsAddSub = false;
-<<<<<<< HEAD
-=======
   bool IsFAddSub = false;
-  bool IsMinMax = false;
->>>>>>> 2d929b67813... [feat] Add __atomic_fetch_fadd() builtin.
 
   switch (Op) {
   case AtomicExpr::AO__c11_atomic_init:
