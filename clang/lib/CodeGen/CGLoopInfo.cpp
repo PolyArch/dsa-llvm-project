@@ -473,7 +473,7 @@ MDNode *LoopInfo::createMetadata(
       }
     }
 
-    if (!Args.empty()) {
+    if (Args.size() > 1) {
       MDNode *LoopID = MDNode::getDistinct(Ctx, Args);
       LoopID->replaceOperandWith(0, LoopID);
       return LoopID;
