@@ -3,8 +3,8 @@ cd build-debug
 
 cmake -G "Unix Makefiles" \
 -DLLVM_TARGETS_TO_BUILD="X86" \
--DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="RISCV" \
 -DLLVM_ENABLE_PROJECTS="clang;libunwind;lld;openmp" \
+-DLLVM_ENABLE_DSA_PASS=OFF \
 -DCMAKE_BUILD_TYPE=Debug \
 -DCMAKE_INSTALL_PREFIX=../install-debug \
 -DLLVM_BINUTILS_INCDIR=$GEM_FORGE_TOP/lib/binutils/include \
@@ -19,8 +19,8 @@ mkdir -p build-release
 cd build-release
 cmake -G "Unix Makefiles" \
 -DLLVM_TARGETS_TO_BUILD="X86" \
--DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="RISCV" \
 -DLLVM_ENABLE_PROJECTS="clang;libunwind;lld;openmp" \
+-DLLVM_ENABLE_DSA_PASS=OFF \
 -DCMAKE_BUILD_TYPE=Release \
 -DCMAKE_INSTALL_PREFIX=../install-release \
 -DLLVM_BINUTILS_INCDIR=$GEM_FORGE_TOP/lib/binutils/include \
