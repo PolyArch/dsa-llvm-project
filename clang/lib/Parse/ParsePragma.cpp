@@ -3630,6 +3630,8 @@ struct SSInfo {
   Token Type;
   Token OffloadTo;
   SmallVector<ArgType, 0> Args;
+  // Used by #pragma ss stream_name
+  std::string StreamName;
 };
 
 }
@@ -3654,6 +3656,7 @@ void PragmaNoStreamSpecializeHandler::HandlePragma(Preprocessor &PP,
 ///  #pragma ss config
 ///  #pragma ss dfg [dedicated/temporal] [unroll(x)] [in/out/inout]
 ///  #pragma ss stream [barrier]
+///  #pragma ss stream_name "abc"
 /// \endcode
 ///
 /// The subject-set clause defines the set of declarations which receive the
@@ -3795,6 +3798,28 @@ void PragmaStreamSpecializeHandler::HandlePragma(Preprocessor &PP,
       return;
     }
 
+  } else if (Str->isStr("stream_name")) {
+
+    Info->Type = Tok;
+
+    PP.Lex(Tok);
+    if (Tok.isNot(tok::string_literal)) {
+      PP.Diag(Tok.getLocation(), diag::err_expected)
+        << tok::string_literal
+        << "stream_name";
+      return;
+    }
+
+    // Setting stream name "" is not allowed (including the quotes).
+    if (Tok.getLength() <= 2) {
+      PP.Diag(Tok.getLocation(), diag::err_pragma_expected_non_empty_string)
+        << "ss stream_name";
+      return;
+    }
+
+    Info->Args.push_back(std::make_pair(Tok, TokenVec({})));
+    PP.Lex(Tok);
+
   } else {
     PP.Diag(Tok.getLocation(), diag::err_expected) << tok::identifier << "dfg/stream/config";
     return;
@@ -3882,6 +3907,22 @@ bool Parser::HandlePragmaStreamSpecialize(SSHint &Hint) {
       Hint.Clauses.emplace_back(Info->Args[0].first, nullptr);
     }
 
+  } else if (Info->Type.getIdentifierInfo()->isStr("stream_name")) {
+    assert(Info->Args.size() == 1);
+    /**
+     * ! Although this is a tok::string_literal, we fake a tok::identifier here.
+     * We also peel off the quotes here.
+     */
+    const auto &StreamNameTok = Info->Args[0].first;
+    assert(StreamNameTok.getLength() > 2);
+    llvm::StringRef StreamName(
+        StreamNameTok.getLiteralData() + 1,
+        StreamNameTok.getLength() - 2);
+    Token SN;
+    SN.startToken();
+    SN.setIdentifierInfo(&PP.getIdentifierTable().get(StreamName));
+    SN.setLocation(Tok.getLocation());
+    Hint.Clauses.emplace_back(SN, nullptr);
   }
 
   assert(Tok.is(tok::eof) || Tok.is(tok::annot_pragma_stream_specialize));

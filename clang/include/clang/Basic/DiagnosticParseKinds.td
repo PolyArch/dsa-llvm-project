@@ -1065,6 +1065,8 @@ def warn_pragma_expected_init_seg : Warning<
   InGroup<IgnoredPragmas>;
 
 def err_pragma_expected_integer : Error<"expected an integer argument in '#pragma %0'">;
+def err_pragma_expected_non_empty_string: Error<
+  "expected a non-empty string argument in '#pragma %0'">;
 def warn_pragma_expected_integer : Warning<
   "expected integer between %0 and %1 inclusive in '#pragma %2' - ignored">,
   InGroup<IgnoredPragmas>;

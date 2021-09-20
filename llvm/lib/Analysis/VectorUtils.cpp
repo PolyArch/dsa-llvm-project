@@ -710,7 +710,8 @@ Instruction *llvm::propagateMetadata(Instruction *Inst, ArrayRef<Value *> VL) {
   for (auto Kind : {LLVMContext::MD_tbaa, LLVMContext::MD_alias_scope,
                     LLVMContext::MD_noalias, LLVMContext::MD_fpmath,
                     LLVMContext::MD_nontemporal, LLVMContext::MD_invariant_load,
-                    LLVMContext::MD_access_group}) {
+                    LLVMContext::MD_access_group,
+                    LLVMContext::MD_stream_specialize}) {
     MDNode *MD = I0->getMetadata(Kind);
 
     for (int J = 1, E = VL.size(); MD && J != E; ++J) {
@@ -733,6 +734,9 @@ Instruction *llvm::propagateMetadata(Instruction *Inst, ArrayRef<Value *> VL) {
         break;
       case LLVMContext::MD_access_group:
         MD = intersectAccessGroups(Inst, IJ);
+        break;
+      case LLVMContext::MD_stream_specialize:
+        MD = MDNode::intersect(MD, IMD);
         break;
       default:
         llvm_unreachable("unhandled metadata");

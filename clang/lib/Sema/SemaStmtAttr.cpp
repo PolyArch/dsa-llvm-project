@@ -450,6 +450,10 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
   case ParsedAttr::AT_SSConfig: {
     return SSConfigAttr::CreateImplicit(S.Context);
   }
+  case ParsedAttr::AT_SSStreamName: {
+    auto SN = A.getArgAsIdent(0)->Ident;
+    return SSStreamNameAttr::CreateImplicit(S.Context, SN->getName());
+  }
   default:
     // if we're here, then we parsed a known attribute, but didn't recognize
     // it as a statement attribute => it is declaration attribute
