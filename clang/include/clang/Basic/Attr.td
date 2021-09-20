@@ -3562,3 +3562,18 @@ def SSDfg : Attr {
 
   let Documentation = [Undocumented];
 }
+
+def SSStreamName : Attr {
+  /// #pragma ss stream_name
+  /// stream_name: Gives a unique name for the stream. Mainly used for debugging.
+  let Spellings = [Pragma<"ss", "stream_name">];
+  let Args = [StringArgument<"Name">];
+
+  let AdditionalMembers = [{
+    void printPrettyPragma(raw_ostream & OS, const PrintingPolicy &Policy) const {
+      return ;
+    }
+  }];
+
+  let Documentation = [Undocumented];
+}

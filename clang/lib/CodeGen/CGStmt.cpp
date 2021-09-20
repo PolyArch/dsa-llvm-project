@@ -639,6 +639,7 @@ void CodeGenFunction::EmitAttributedStmt(const AttributedStmt &S) {
     }
   SaveAndRestore<bool> save_nomerge(InNoMergeAttributedStmt, nomerge);
 
+  const SSStreamNameAttr *SNAttr = nullptr;
   for (auto Attr : S.getAttrs()) {
     if (auto SDA = dyn_cast<SSDfgAttr>(Attr)) {
       if (SDA->getType() == SSDfgAttr::Temporal) {
@@ -649,10 +650,70 @@ void CodeGenFunction::EmitAttributedStmt(const AttributedStmt &S) {
     } else if (isa<SSConfigAttr>(Attr)) {
       EmitSSCapturedRegion(cast<CompoundStmt>(*S.getSubStmt()), Config);
       return;
+    } else if (auto SNA = dyn_cast<SSStreamNameAttr>(Attr)) {
+      assert(!SNAttr && "Multiple StreamName Pragma");
+      SNAttr = SNA;
     }
   }
 
   EmitStmt(S.getSubStmt(), S.getAttrs());
+
+  if (SNAttr) {
+    /**
+     * To annotate a memory access with the StreamName, we handle these cases:
+     * 1. If the SubStmt is a DeclStmt, we assume this is a LoadStream, and
+     * search backwards for the first LoadInst.
+     * 2. If the SubSmt is a BinaryOperation, we assume this is a StoreStream,
+     * and search backwards for the first StoreInst.
+     */
+    auto SubStmtType = S.getSubStmt()->getStmtClass();
+    llvm::BasicBlock *CurBB = Builder.GetInsertBlock();
+
+    // llvm::errs() << "Found StreamName " << SNAttr->getName() << '\n';
+    // S.getSubStmt()->dump();
+    // for (const auto &Inst : *CurBB) {
+    //   Inst.print(llvm::errs());
+    //   llvm::errs() << '\n';
+    // }
+
+    llvm::Instruction *StreamInst = nullptr;
+    for (auto InstIter = CurBB->rbegin(), InstEnd = CurBB->rend();
+         InstIter != InstEnd; ++InstIter) {
+      auto Inst = &*InstIter;
+      if (llvm::isa<llvm::LoadInst>(Inst)) {
+        StreamInst = Inst;
+        break;
+      } else if (llvm::isa<llvm::StoreInst>(Inst)) {
+        // Ignore if this is DeclStmt, which means this is a StackStore.
+        if (SubStmtType != Stmt::DeclStmtClass) {
+          StreamInst = Inst;
+          break;
+        }
+      } else if (llvm::isa<llvm::AtomicCmpXchgInst>(Inst) ||
+                 llvm::isa<llvm::AtomicRMWInst>(Inst)) {
+        StreamInst = Inst;
+        break;
+      }
+    }
+
+    if (!StreamInst) {
+      llvm::errs() << "Failed to find StreamInst for StreamName "
+                   << SNAttr->getName() << '\n';
+      assert(false);
+    }
+
+    // llvm::errs() << "Select StreamInst ";
+    // StreamInst->print(llvm::errs());
+    // llvm::errs() << '\n';
+
+    auto &Ctx = getLLVMContext();
+    llvm::Metadata *Vals[] = {
+      llvm::MDString::get(Ctx, "ss.stream_name"),
+      llvm::MDString::get(Ctx, SNAttr->getName()),
+    };
+    llvm::MDNode *MDN = llvm::MDNode::get(Ctx, Vals);
+    StreamInst->setMetadata("llvm.ss", MDN);
+  }
 }
 
 void CodeGenFunction::EmitGotoStmt(const GotoStmt &S) {
