@@ -16,6 +16,7 @@
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/PrettyStackTrace.h"
@@ -630,6 +631,19 @@ void CodeGenFunction::EmitLabelStmt(const LabelStmt &S) {
   EmitStmt(S.getSubStmt());
 }
 
+namespace {
+class AtomicExprChecker : public RecursiveASTVisitor<AtomicExprChecker> {
+ public:
+  bool VisitAtomicExpr(AtomicExpr *S) {
+    this->HasAtomic = true;
+    return true;
+  }
+  bool FoundAtomic() const { return this->HasAtomic; }
+ private:
+  bool HasAtomic = false;
+};
+}
+
 void CodeGenFunction::EmitAttributedStmt(const AttributedStmt &S) {
   bool nomerge = false;
   for (const auto *A : S.getAttrs())
@@ -656,6 +670,12 @@ void CodeGenFunction::EmitAttributedStmt(const AttributedStmt &S) {
     }
   }
 
+  /**
+   * Get the current basic block before starting the insertion.
+   * This is to handle the case when atomicxchg insert new BBs.
+   */
+  llvm::BasicBlock *CurBB = Builder.GetInsertBlock();
+
   EmitStmt(S.getSubStmt(), S.getAttrs());
 
   if (SNAttr) {
@@ -667,32 +687,47 @@ void CodeGenFunction::EmitAttributedStmt(const AttributedStmt &S) {
      * and search backwards for the first StoreInst.
      */
     auto SubStmtType = S.getSubStmt()->getStmtClass();
-    llvm::BasicBlock *CurBB = Builder.GetInsertBlock();
 
     // llvm::errs() << "Found StreamName " << SNAttr->getName() << '\n';
     // S.getSubStmt()->dump();
-    // for (const auto &Inst : *CurBB) {
-    //   Inst.print(llvm::errs());
+    // for (const auto &BB : *CurBB->getParent()) {
+    //   BB.print(llvm::errs());
     //   llvm::errs() << '\n';
     // }
+    // CurBB->print(llvm::errs());
+    // llvm::errs() << '\n';
+
+    bool IsAtomic = false;
+    {
+      AtomicExprChecker AEC;
+      AEC.TraverseStmt(const_cast<Stmt *>(S.getSubStmt()));
+      IsAtomic = AEC.FoundAtomic();
+    }
 
     llvm::Instruction *StreamInst = nullptr;
     for (auto InstIter = CurBB->rbegin(), InstEnd = CurBB->rend();
          InstIter != InstEnd; ++InstIter) {
       auto Inst = &*InstIter;
-      if (llvm::isa<llvm::LoadInst>(Inst)) {
-        StreamInst = Inst;
-        break;
-      } else if (llvm::isa<llvm::StoreInst>(Inst)) {
-        // Ignore if this is DeclStmt, which means this is a StackStore.
-        if (SubStmtType != Stmt::DeclStmtClass) {
+
+      if (IsAtomic) {
+        // AtomicStream.
+        if (llvm::isa<llvm::AtomicCmpXchgInst>(Inst) ||
+            llvm::isa<llvm::AtomicRMWInst>(Inst)) {
           StreamInst = Inst;
           break;
         }
-      } else if (llvm::isa<llvm::AtomicCmpXchgInst>(Inst) ||
-                 llvm::isa<llvm::AtomicRMWInst>(Inst)) {
-        StreamInst = Inst;
-        break;
+      } else if (SubStmtType == Stmt::DeclStmtClass) {
+        // Declaration means LoadStream.
+        if (llvm::isa<llvm::LoadInst>(Inst)) {
+          StreamInst = Inst;
+          break;
+        }
+      } else {
+        // Normal StoreStream?
+        if (llvm::isa<llvm::StoreInst>(Inst)) {
+          StreamInst = Inst;
+          break;
+        }
       }
     }
 
