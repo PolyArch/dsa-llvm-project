@@ -17,6 +17,42 @@
 namespace dsa {
 namespace analysis {
 
+struct LinearTerm {
+  virtual ~LinearTerm() {}
+};
+
+struct LoopInvariant : LinearTerm {
+  /*!
+   * \brief The loop invariant value under the linear combination.
+   */
+  const SCEV *Value;
+  /*!
+   * \brief If this LinearInfo is a constant int, return the value, o.w. return
+   * nullptr.
+   */
+  const uint64_t *constInt() const { return nullptr; }
+};
+
+struct LinearCombination : LinearTerm {
+  /*!
+   * \brief The coefficient of linear combination.
+   */
+  std::vector<LinearTerm*> Coef;
+  /*!
+   * \brief The inductive variable of linear combination.
+   */
+  std::vector<Value*> *IndVar;
+  /*!
+   * \brief The trip count of each loop induction.
+   */
+  std::vector<LinearCombination*> *TripCount;
+  /*!
+   * \brief Return the loop level from which, this value is no longer a loop
+   * nest invariant.
+   */
+  int partialInvariant() const { return 0; }
+};
+
 /*!
  * \brief Assuming the index expression is affined, we have sum(Loops[i] *
  * Coef[i]) + Base.
@@ -26,6 +62,10 @@ struct LinearInfo {
    * \brief The coefficient of each loop variable.
    */
   std::vector<LinearInfo> Coef;
+  /*!
+   * \brief The trip count of each loop variable.
+   */
+  std::vector<LinearInfo> TripCount;
   /*!
    * \brief The base coefficient
    */
@@ -61,9 +101,17 @@ struct LinearInfo {
 LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,
                             const std::vector<Loop *> &LoopNest);
 
-std::pair<LinearInfo, std::vector<LinearInfo>>
-fuseInnerDimensions(LinearInfo IdxLI, std::vector<LinearInfo> LoopLI,
-                    int DType, int Unroll, int P, IRBuilder<> *IB, ScalarEvolution &SE);
+/*!
+ * \brief Fuse continous inner-most memory access dimensions.
+ * \param LI The memory access pattern to be fused.
+ * \param DType The data type of memory access.
+ * \param Unroll The unrolling degree of this access.
+ * \param P The padding strategy of the access.
+ * \param SE The SCEV analysis.
+ * \param CutOff The dimension to stop fusing. Sometimes we do not want every dimension to be fused.
+ */
+void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll,
+                         ScalarEvolution &SE, int CutOff);
 
 } // namespace analysis
 } // namespace dsa

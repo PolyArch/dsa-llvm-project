@@ -5,7 +5,7 @@
 #include "./llvm_common.h"
 
 #include "DFGAnalysis.h"
-#include "Transformation.h"
+#include "DFGIR.h"
 #include "Util.h"
 
 namespace dsa {
@@ -29,8 +29,7 @@ std::vector<utils::StickyRegister> injectDSARegisterFile(Function &F);
  * \param os Where the given DFG is emitted. If null, dump to the filename of
  * the given DFGFile.
  */
-void emitDFG(raw_ostream &OS, DFGFile *DF, std::vector<analysis::CoalMemoryInfo> &DSUs,
-             analysis::SpadInfo &SI);
+void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR, CodeGenContext &CGC);
 
 struct CodeGenContext {
   /*!
@@ -155,9 +154,7 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
  * \brief Inject stream intrinsics.
  * \param CGC The context of code injection.
  */
-void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
-                            std::vector<analysis::CoalMemoryInfo> &CMIs,
-                            analysis::SpadInfo &SI, analysis::DFGAnalysisResult &DAR);
+void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnalysisResult &DAR);
 
 /*!
  *  \brief Erase offloaded instructions.

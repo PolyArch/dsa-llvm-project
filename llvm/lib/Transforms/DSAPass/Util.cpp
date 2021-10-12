@@ -7,7 +7,7 @@
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 #include "DFGEntry.h"
-#include "Transformation.h"
+#include "DFGIR.h"
 #include "Util.h"
 
 #include <queue>

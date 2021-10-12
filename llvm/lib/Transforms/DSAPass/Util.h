@@ -7,6 +7,7 @@
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Constant.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
 
@@ -24,8 +25,7 @@ struct ModuleFlags {
   int64_t x{default_};                                                         \
   void getFlag##x() {                                                          \
     char *env = getenv(#x);                                                    \
-    if (env)                                                                   \
-      x = std::stol(env);                                                      \
+    if (env) x = std::stol(env);                                               \
   }
   /*!
    * \brief Indirect memory access like a[b[i]].

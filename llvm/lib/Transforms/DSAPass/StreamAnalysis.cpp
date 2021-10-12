@@ -83,7 +83,7 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
   LinearInfo Res;
   int i = 0; // NOLINT
   auto AppendZero = [SE, &Res, &Loops]() {
-    auto Coef = LinearInfo::loopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0)));
+    auto Coef = LinearInfo::loopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0, true)));
     Res.Coef.push_back(Coef);
   };
   for (int N = Loops.size(); i < N; ++i) {
@@ -111,7 +111,8 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
           << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i]
           << "\nCurrent Loop: " << *SARE->getLoop()
           << "\nOuter Most: " << *Loops.back();
-        auto Coef = LinearInfo::loopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0)));
+        auto Coef = LinearInfo::loopInvariant(SE, Loops.size(),
+                                              SE->getConstant(APInt(64, 0, true)));
         Res.Coef.push_back(Coef);
         continue;
       }
@@ -128,32 +129,42 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
   return Res;
 }
 
-
-std::pair<LinearInfo, std::vector<LinearInfo>>
-fuseInnerDimensions(LinearInfo IdxLI, std::vector<LinearInfo> LoopLI,
-                    int DType, int Unroll, int P, IRBuilder<> *IB, ScalarEvolution &SE) {
-  if (IdxLI.Coef.empty()) {
-    return {IdxLI, LoopLI};
+void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll, ScalarEvolution &SE, int CutOff) {
+  if (LI.Coef.empty()) {
+    return;
   }
-  while (LoopLI.size() > 1) {
-    if (const auto *S1D = IdxLI.Coef.front().constInt()) {
+  int PI = LI.partialInvariant();
+  std::vector<LinearInfo> SlicedCoef(LI.Coef.begin(), LI.Coef.begin() + PI);
+  std::vector<LinearInfo> SlicedLoop(LI.TripCount.begin(), LI.TripCount.begin() + PI);
+
+  LI.Coef.erase(LI.Coef.begin(), LI.Coef.begin() + PI);
+  LI.TripCount.erase(LI.TripCount.begin(), LI.TripCount.begin() + PI);
+
+  auto &Coef = LI.Coef;
+  auto &Loop = LI.TripCount;
+  while ((int) Coef.size() > CutOff) {
+    if (const auto *S1D = Coef.front().constInt()) {
       if (((int) *S1D) == DType) {
-        if (const auto *N = LoopLI[0].constInt()) {
+        DSA_LOG(FUSE) << "S1D: " << *S1D << " , DType" << DType;
+        if (const auto *N = Loop[0].constInt()) {
+          // Fuse it only when it is divisible.
+          DSA_LOG(FUSE) << "InnerN: " << *N;
           if ((*N + 1) % Unroll) {
             break;
           }
-          if (const auto *S2D = IdxLI.Coef[1].constInt()) {
+          if (const auto *S2D = Coef[1].constInt()) {
+            DSA_LOG(FUSE) << "Stride2D: " << *S2D;
             // TODO(@were): Relax this condition.
-            if (LoopLI[1].invariant()) {
+            if (Loop[1].invariant()) {
               if ((*S1D) * (*N + 1) == *S2D) {
-                LoopLI.erase(LoopLI.begin());
-                IdxLI.Coef.erase(IdxLI.Coef.begin());
-                IdxLI.Coef.front().Base = SE.getConstant(IB->getInt64(DType));
-                auto *SCEVN = SE.getConstant(IB->getInt64(*N + 1));
-                auto *SCEVNegOne = SE.getConstant(IB->getInt64(-1));
-                LoopLI.front().Base = SE.getMulExpr(LoopLI.front().Base, SCEVN);
-                LoopLI.front().Base = SE.getAddExpr(LoopLI.front().Base, SCEVN);
-                LoopLI.front().Base = SE.getAddExpr(LoopLI.front().Base, SCEVNegOne);
+                Loop.erase(Loop.begin());
+                Coef.erase(Coef.begin());
+                Coef.front().Base = SE.getConstant(APInt(64, DType, true));
+                auto *SCEVN = SE.getConstant(APInt(64, *N + 1, true));
+                auto *SCEVNegOne = SE.getConstant(APInt(64, -1, true));
+                Loop.front().Base = SE.getMulExpr(Loop.front().Base, SCEVN);
+                Loop.front().Base = SE.getAddExpr(Loop.front().Base, SCEVN);
+                Loop.front().Base = SE.getAddExpr(Loop.front().Base, SCEVNegOne);
                 continue;
               }
             }
@@ -163,7 +174,8 @@ fuseInnerDimensions(LinearInfo IdxLI, std::vector<LinearInfo> LoopLI,
     }
     break;
   }
-  return {IdxLI, LoopLI};
+  LI.Coef.insert(LI.Coef.begin(), SlicedCoef.begin(), SlicedCoef.end());
+  LI.TripCount.insert(LI.TripCount.begin(), SlicedLoop.begin(), SlicedLoop.end());
 }
 
 namespace test {

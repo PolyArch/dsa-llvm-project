@@ -92,7 +92,7 @@ struct DFGEntry {
   virtual int getAbstainBit();
 
   /// Get the name of the entry to be dumped in the DFG textformat
-  std::string name(int Idx = -1);
+  virtual std::string name(int Idx = -1);
 
   /// Get the predicate of the entry if exists. O.w. return nullptr.
   virtual Predicate *getPredicate(int *MaskPtr = nullptr);
@@ -100,7 +100,7 @@ struct DFGEntry {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *);
+  inline virtual void accept(dsa::DFGEntryVisitor *);
 
   int ID{-1};
   int index();
@@ -108,7 +108,6 @@ struct DFGEntry {
   static bool classof(const DFGEntry *DE) { return true; }
 };
 
-struct CtrlSignal;
 struct OutputPort;
 struct InputPort;
 struct AtomicPortMem;
@@ -128,7 +127,7 @@ struct ComputeBody : DFGEntry {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
   // If this instruction is handled by atomic operation.
   AtomicPortMem *isAtomic();
   // If this instruction is immidiately consumed by an atomic operation.
@@ -156,21 +155,31 @@ struct Predicate : DFGEntry {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kPredicate; }
 };
 
 // A accumulator Instruction
 struct Accumulator : ComputeBody {
-  CtrlSignal *Ctrl;
-  Accumulator(DFGBase *Parent, Instruction *Operation, CtrlSignal *Ctrl);
+
+  /*!
+   * \brief The loop level this accumulator should be reset.
+   */
+  int ResetLevel{-1};
+
+  Accumulator(DFGBase *Parent, Instruction *Operation);
+  /*!
+   * \brief If this value should be unrolled in DFG.
+   */
   bool shouldUnroll() override;
+
+  // TODO(@were): Deprecate this!
   Value *numValuesProduced();
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kAccumulator; }
 };
@@ -188,7 +197,7 @@ struct PortBase : DFGEntry {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) {
     return DE->Kind > kPortStarts && DE->Kind < kPortEnds;
@@ -201,7 +210,11 @@ struct InputPort : PortBase {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
+  /*!
+   * \brief If this memory stream should be tagged.
+   */
+  std::vector<Accumulator *> Tagged;
 
   static bool classof(const DFGEntry *DE) {
     return DE->Kind > kInPortStarts && DE->Kind < kInPortEnds;
@@ -222,28 +235,103 @@ struct CtrlMemPort : InputPort {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kCtrlMemPort; }
 };
 
+
 // Memory port can be either a spad or a DMA
 struct MemPort : InputPort {
+  /*!
+   * \brief The memory load under affined loops to be re-written.
+   */
   LoadInst *Load;
+
   MemPort(DFGBase *Parent, LoadInst *Load);
 
-  static const int PtrOperandIdx;
+  /*!
+   * \brief The operand idx of pointer in the underlying instruction.
+   *        Both Load and Store require a uniform interface to extract the pointers
+   *        for the functions analyze the pointers.
+   */
+  static constexpr int PtrOperandIdx = 0;
 
+  /*!
+   * \brief If this entry should be unrolled.
+   */
   bool shouldUnroll() override;
+  /*!
+   * \brief The corresponding instruction in LLVM.
+   */
   Instruction *underlyingInst() override;
+  /*!
+   * \brief The policy of data padding.
+   */
   int fillMode();
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kMemPort; }
 };
+
+template<typename T, typename TBase, EntryKind K>
+struct SLPIO : TBase {
+  std::vector<T*> Coal;
+
+  inline void accept(dsa::DFGEntryVisitor *DEV) override;
+
+  Instruction *underlyingInst() override {
+    CHECK(false) << "This node for sure has multiple instructions!";
+    return nullptr;
+  }
+
+  void dump(std::ostringstream &OS) override {
+    for (auto *Elem : Coal) {
+      Elem->dump(OS);
+      OS << "\n";
+    }
+  }
+
+  std::vector<Value *> underlyingValues() override {
+    std::vector<Value *> Res;
+    Res.reserve(Coal.size());
+    for (auto *Elem : Coal) {
+      Res.push_back(Elem->underlyingValue());
+    }
+    return Res;
+  }
+
+  std::vector<Instruction *> underlyingInsts() override {
+    std::vector<Instruction *> Res;
+    Res.reserve(Coal.size());
+    for (auto *Elem : Coal) {
+      Res.push_back(Elem->underlyingInst());
+    }
+    return Res;
+  }
+
+  Predicate *getPredicate(int *) override {
+    for (auto Elem : Coal) {
+      CHECK(!Elem->getPredicate(nullptr));
+    }
+    return nullptr;
+  }
+
+  SLPIO(DFGBase *Parent) : TBase(Parent) {
+    TBase::Kind = K;
+  }
+
+  bool shouldUnroll() override {
+    return TBase::shouldUnroll();
+  }
+
+  static bool classof(const DFGEntry *DE) { return DE->Kind == K; }
+};
+
+using SLPMemPort = SLPIO<MemPort, InputPort, kSLPMemPort>;
 
 // The data to this port is from an output of certain DFG
 struct StreamInPort : InputPort {
@@ -254,26 +342,9 @@ struct StreamInPort : InputPort {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kStreamInPort; }
-};
-
-// For control signal, the data consume rate matters
-// The control signal should match its consume rate
-struct CtrlSignal : InputPort {
-  Accumulator *Controlled;
-  CtrlSignal(DFGBase *Parent);
-
-  Value *findConsumeRate();
-
-  bool shouldUnroll() override;
-  /*!
-   * \brief The entrance of the visitor pattern.
-   */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
-
-  static bool classof(const DFGEntry *DE) { return DE->Kind == kCtrlSignal; }
 };
 
 // A loop invariant through all the loop levels,
@@ -290,7 +361,7 @@ struct InputConst : InputPort {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kInputConst; }
 };
@@ -301,6 +372,7 @@ struct OutputPort : PortBase {
   Instruction *Output;
   Value *ConsumeRate;
   OutputPort(DFGBase *Parent, Value *Value);
+  OutputPort(DFGBase *Parent) : PortBase(Parent), Output(nullptr) {}
   int Latency{-1};
 
   Instruction *underlyingInst() override;
@@ -308,11 +380,16 @@ struct OutputPort : PortBase {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
   /*!
    * \brief If this value should be unrolled.
    */
   bool shouldUnroll() override;
+
+  /*!
+   * \brief The name of this output port in DFG.
+   */
+  std::string name(int Idx = -1) override;
 
   static bool classof(const DFGEntry *DE) {
     return DE->Kind > kOutPortStarts && DE->Kind < kOutPortEnds;
@@ -324,16 +401,27 @@ struct PortMem : OutputPort {
   StoreInst *Store;
   PortMem(DFGBase *Parent, StoreInst *Store);
 
-  static const int PtrOperandIdx;
+  static constexpr int PtrOperandIdx = 1;
 
   Instruction *underlyingInst() override;
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kPortMem; }
 };
+
+using SLPPortMem = SLPIO<PortMem, OutputPort, kSLPPortMem>;
+
+template<>
+inline bool SLPPortMem::shouldUnroll() {
+  bool Res = Coal[0]->shouldUnroll();
+  for (int i = 1; i < (int) Coal.size(); ++i) { // NOLINT
+    CHECK(Coal[i]->shouldUnroll() == Res);
+  }
+  return Res;
+}
 
 // Value will be consumed by another dfg
 struct StreamOutPort : OutputPort {
@@ -343,7 +431,7 @@ struct StreamOutPort : OutputPort {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *);
+  inline virtual void accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kStreamOutPort; }
 
@@ -367,7 +455,7 @@ struct IndMemPort : InputPort {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kIndMemPort; }
 };
@@ -394,27 +482,9 @@ struct AtomicPortMem : OutputPort {
   /*!
    * \brief The entrance of the visitor pattern.
    */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
+  inline virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kAtomicPortMem; }
-};
-
-struct CoalescedMemPort : InputPort {
-  std::vector<std::pair<int, MemPort*>> Operations;
-
-  std::vector<Instruction *> underlyingInsts() {
-    std::vector<Instruction *> Res;
-    auto F = [&Res] (std::pair<int, MemPort*> &Elem) { Res.push_back(Elem.second->underlyingInst()); };
-    std::for_each(Operations.begin(), Operations.end(), F);
-    return Res;
-  }
-
-  /*!
-   * \brief The entrance of the visitor pattern.
-   */
-  virtual void accept(dsa::DFGEntryVisitor *);
-
-  static bool classof(const DFGEntry *DE) { return DE->Kind == kCoalMemPort; }
 };
 
 
@@ -431,9 +501,9 @@ struct DFGEntryVisitor {
   virtual void Visit(InputPort *);        // NOLINT
   virtual void Visit(CtrlMemPort *);      // NOLINT
   virtual void Visit(MemPort *);          // NOLINT
-  virtual void Visit(CoalescedMemPort *); // NOLINT
+  virtual void Visit(SLPMemPort *);       // NOLINT
+  virtual void Visit(SLPPortMem *);       // NOLINT
   virtual void Visit(StreamInPort *);     // NOLINT
-  virtual void Visit(CtrlSignal *);       // NOLINT
   virtual void Visit(InputConst *);       // NOLINT
   virtual void Visit(OutputPort *);       // NOLINT
   virtual void Visit(PortMem *);          // NOLINT
@@ -443,5 +513,26 @@ struct DFGEntryVisitor {
 };
 
 } // namespace dsa
+
+#define VISIT_IMPL(TYPE) inline void TYPE::accept(dsa::DFGEntryVisitor *V) { V->Visit(this); }
+VISIT_IMPL(DFGEntry)
+VISIT_IMPL(ComputeBody)
+VISIT_IMPL(Predicate)
+VISIT_IMPL(Accumulator)
+VISIT_IMPL(PortBase)
+VISIT_IMPL(InputPort)
+VISIT_IMPL(CtrlMemPort)
+VISIT_IMPL(MemPort)
+VISIT_IMPL(StreamInPort)
+VISIT_IMPL(InputConst)
+VISIT_IMPL(OutputPort)
+VISIT_IMPL(PortMem)
+VISIT_IMPL(StreamOutPort)
+VISIT_IMPL(IndMemPort)
+VISIT_IMPL(AtomicPortMem)
+#undef VISIT_IMPL
+
+template<> inline void SLPMemPort::accept(dsa::DFGEntryVisitor *DEV) { DEV->Visit(this); }
+template<> inline void SLPPortMem::accept(dsa::DFGEntryVisitor *DEV) { DEV->Visit(this); }
 
 #endif // STREAM_SPECIALIZE_PORT_H_
