@@ -1,6 +1,5 @@
 #pragma once
 
-#include "DFGEntry.h"
 #include "Pass.h"
 #include "StreamAnalysis.h"
 #include "Util.h"

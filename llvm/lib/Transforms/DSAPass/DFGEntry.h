@@ -174,8 +174,6 @@ struct Accumulator : ComputeBody {
    */
   bool shouldUnroll() override;
 
-  // TODO(@were): Deprecate this!
-  Value *numValuesProduced();
   /*!
    * \brief The entrance of the visitor pattern.
    */

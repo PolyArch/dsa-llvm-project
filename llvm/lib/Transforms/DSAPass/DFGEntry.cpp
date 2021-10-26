@@ -379,40 +379,6 @@ void DFGEntry::dump(std::ostringstream &OS) {
   }
 }
 
-Value *Accumulator::numValuesProduced() {
-  auto *Inst = underlyingInst();
-  CHECK(isInMajor());
-  for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
-    if (auto *Phi = dyn_cast<PHINode>(Inst->getOperand(i))) {
-      for (size_t j = 0; j < Phi->getNumIncomingValues(); ++j) { // NOLINT
-        auto *IB = Phi->getIncomingBlock(j);
-        bool Found = false;
-        for (auto *BB : Parent->getBlocks()) {
-          if (BB == IB) {
-            Found = true;
-            break;
-          }
-        }
-        if (!Found) {
-          auto *DD = dyn_cast<DedicatedDFG>(Parent);
-          assert(DD);
-          for (size_t k = 0; k < DD->LoopNest.size(); ++k) { // NOLINT
-            if (DD->LoopNest[k]->getBlocksSet().count(IB)) {
-              return DD->ProdTripCount(
-                  k, DD->Preheader->getFirstNonPHI()->getNextNode());
-            }
-          }
-          return DD->ProdTripCount(
-              DD->LoopNest.size(),
-              DD->Preheader->getFirstNonPHI()->getNextNode());
-        }
-      }
-    }
-  }
-  CHECK(false);
-  return nullptr;
-}
-
 int MemPort::fillMode() {
   if (auto *DD = dyn_cast<DedicatedDFG>(Parent)) {
     if (Parent->getUnroll() <= 1)

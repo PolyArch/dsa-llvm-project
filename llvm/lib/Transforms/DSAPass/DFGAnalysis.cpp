@@ -609,27 +609,29 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
         auto &IdxLI = LI[MP];
         std::vector<const SCEV*> N;
         std::vector<const SCEV*> Stride;
-        int PI = IdxLI.partialInvariant();
-        auto &TripCnt = IdxLI.TripCount;
-        for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
-          N.push_back(TripCnt[j].Base);
-          Stride.push_back(IdxLI.Coef[j].Base);
-        }
-        if (IdxLI.Coef.size() - PI == 3) {
-          if (auto *CIS2D = dyn_cast<SCEVConstant>(Stride[1])) {
-            if (auto *CIN1D = dyn_cast<SCEVConstant>(N[0])) {
-              if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
-                if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
-                  int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-                  int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType * SLPMul;
-                  DSA_LOG(BUFFET)
-                    << SI.Buffet.size() << ": " << MP->dump() << ", "
-                    << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << SLPMul << " * " << DType
-                    << " * 2 = " << BufferSize << "\n" << IdxLI.toString() << "\n"
-                    << SI.isSpad(MP->Load);
-                  // MP, Total, BufferSize, -1
-                  SI.Buffet.emplace_back(MP, SI.Total, BufferSize, -1, -1);
-                  SI.Total += BufferSize;
+        if (auto *LC = dyn_cast<LinearCombine>(IdxLI)) {
+          int PI = LC->partialInvariant();
+          auto &TripCnt = LC->TripCount;
+          for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
+            N.push_back(TripCnt[j]->Raw);
+            Stride.push_back(LC->Coef[j]->Raw);
+          }
+          if (LC->Coef.size() - PI == 3) {
+            if (auto *CIS2D = dyn_cast<SCEVConstant>(Stride[1])) {
+              if (auto *CIN1D = dyn_cast<SCEVConstant>(N[0])) {
+                if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
+                  if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
+                    int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+                    int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType * SLPMul;
+                    DSA_LOG(BUFFET)
+                      << SI.Buffet.size() << ": " << MP->dump() << ", "
+                      << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << SLPMul << " * " << DType
+                      << " * 2 = " << BufferSize << "\n" << LC->toString() << "\n"
+                      << SI.isSpad(MP->Load);
+                    // MP, Total, BufferSize, -1
+                    SI.Buffet.emplace_back(MP, SI.Total, BufferSize, -1, -1);
+                    SI.Total += BufferSize;
+                  }
                 }
               }
             }
@@ -646,11 +648,11 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
       int Unroll;
       SpadInfo &SI;
       DFGLoopInfo &DLI;
-      std::unordered_map<DFGEntry*, LinearInfo> &LI;
+      std::unordered_map<DFGEntry*, SEWrapper*> &LI;
       IRBuilder<> *IB;
       ScalarEvolution &SE;
       Analyzer(int U, SpadInfo &SI, DFGLoopInfo &DLI,
-               std::unordered_map<DFGEntry*, LinearInfo> &LI,
+               std::unordered_map<DFGEntry*, SEWrapper*> &LI,
                xform::CodeGenContext &CGC) :
         Unroll(U), SI(SI), DLI(DLI), LI(LI), IB(CGC.IB), SE(CGC.SE) {}
     };
@@ -887,14 +889,18 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
     void Visit(DedicatedDFG *DD) override {
       auto &LoopNest = DD->LoopNest;
       DLI.LoopNest = LoopNest;
-      for (int I = 0; I < (int) LoopNest.size(); ++I) {
-        auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[I]);
+      for (int i = (int) LoopNest.size() - 1; i >= 0; --i) { // NOLINT
+        auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[i]);
         if (isa<SCEVCouldNotCompute>(NSCEV)) {
           DLI.TripCount.emplace_back();
         } else {
-          DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest));
+          auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
+          DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest[i],
+                                                             LoopSlice, DLI.TripCount));
+          DSA_LOG(AFFINE) << i << ": " << DLI.TripCount.back()->toString();
         }
       }
+      std::reverse(DLI.TripCount.begin(), DLI.TripCount.end());
     }
 
     void Visit(TemporalDFG *TD) override {}
@@ -924,20 +930,37 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
  *        If abs is true, and -1 is returned, it is not a constant.
  *        If abs is false, constant should be garanteed to call.
  */
-int64_t indexPairOffset(LinearInfo &A, LinearInfo &B, ScalarEvolution &SE, bool Signed) {
+int64_t indexPairOffset(SEWrapper *ASW, SEWrapper *BSW, ScalarEvolution &SE, bool Signed) {
   bool SameDims = true;
-  if (A.Coef.size() != B.Coef.size()) {
-    CHECK(!Signed);
-    return -1;
-  }
-  for (int j = 0; j < (int) A.Coef.size(); ++j) { // NOLINT
-    if (A.Coef[j].Base != B.Coef[j].Base) {
-      DSA_LOG(COAL) << *SE.getEqualPredicate(A.Coef[j].Base, B.Coef[j].Base);
-      SameDims = false;
+  const SCEV *ABase = nullptr;
+  const SCEV *BBase = nullptr;
+  if (auto *A = dyn_cast<LinearCombine>(ASW)) {
+    if (auto *B = dyn_cast<LinearCombine>(BSW)) {
+      if (A->Coef.size() != B->Coef.size()) {
+        CHECK(!Signed);
+        return -1;
+      }
+      for (int j = 0; j < (int) A->Coef.size(); ++j) { // NOLINT
+        if (A->Coef[j]->Raw != B->Coef[j]->Raw) {
+          DSA_LOG(COAL) << *SE.getEqualPredicate(A->Coef[j]->Raw, B->Coef[j]->Raw);
+          SameDims = false;
+        }
+      }
+      if (SameDims && isa<LoopInvariant>(A->Base) && isa<LoopInvariant>(B->Base)) {
+        ABase = A->Base->Raw;
+        BBase = B->Base->Raw;
+      }
+    }
+  } else {
+    if (auto *A = dyn_cast<LoopInvariant>(ASW)) {
+      if (auto *B = dyn_cast<LoopInvariant>(BSW)) {
+        ABase = A->Raw;
+        BBase = B->Raw;
+      }
     }
   }
-  if (SameDims) {
-    if (auto *Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(B.Base, SE.getNegativeSCEV(A.Base)))) {
+  if (ABase && BBase) {
+    if (auto *Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(BBase, SE.getNegativeSCEV(ABase)))) {
       auto Res = Offset->getAPInt().getSExtValue();
       return Signed ? Res : std::abs(Res);
     }
@@ -953,18 +976,21 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
     void Visit(MemPort *MP) override {
       auto &LI = DAR.LI[MP->Parent->ID];
       auto &DLI = DAR.DLI[MP->Parent->ID];
-      LI[MP] = analyzeIndexExpr(&SE, SE.getSCEV(MP->Load->getPointerOperand()), DLI.LoopNest);
-      LI[MP].TripCount = DLI.TripCount;
+      LI[MP] = analyzeIndexExpr(&SE, SE.getSCEV(MP->Load->getPointerOperand()), MP, DLI.LoopNest,
+                                DLI.TripCount);
     }
     void Visit(PortMem *PM) override {
       auto &LI = DAR.LI[PM->Parent->ID];
       auto &DLI = DAR.DLI[PM->Parent->ID];
-      auto Res = analyzeIndexExpr(&SE, SE.getSCEV(PM->Store->getPointerOperand()), DLI.LoopNest);
-      Res.TripCount = DLI.TripCount;
-      auto PI = Res.partialInvariant();
-      if (!Res.Coef.empty()) {
-        Res.Coef.erase(Res.Coef.begin(), Res.Coef.begin() + PI);
-        Res.TripCount.erase(Res.TripCount.begin(), Res.TripCount.begin() + PI);
+      auto *Res = analyzeIndexExpr(&SE, SE.getSCEV(PM->Store->getPointerOperand()), PM, DLI.LoopNest,
+                                   DLI.TripCount);
+      if (auto *LC = dyn_cast<LinearCombine>(Res)) {
+        LC->TripCount = DLI.TripCount;
+        auto PI = LC->partialInvariant();
+        if (!LC->Coef.empty()) {
+          LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + PI);
+          LC->TripCount.erase(LC->TripCount.begin(), LC->TripCount.begin() + PI);
+        }
       }
       LI[PM] = Res;
     }
@@ -979,6 +1005,13 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     for (auto *Elem : DFGs[i]->Entries) {
       Elem->accept(&AE);
+      {
+        auto Iter = DAR.LI[i].find(Elem);
+        if (Iter != DAR.LI[i].end()) {
+          DSA_LOG(AFFINE) << Elem->dump();
+          DSA_LOG(AFFINE) << Iter->second->toString();
+        }
+      }
     }
   }
 }
@@ -986,7 +1019,7 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
 template<typename T>
 void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution &SE,
                                 std::vector<int> &DSU,
-                                std::unordered_map<DFGEntry*, LinearInfo> &LI) {
+                                std::unordered_map<DFGEntry*, SEWrapper*> &LI) {
   bool Iterative = true;
   while (Iterative) {
     Iterative = false;
@@ -1023,8 +1056,8 @@ void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution
 template<typename TSLP, typename TEntry>
 void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
                               std::vector<int> &DSU, std::vector<int> &DSize,
-                              ScalarEvolution &SE, std::unordered_map<DFGEntry*,
-                              LinearInfo> &LI, std::vector<int> &Remove) {
+                              ScalarEvolution &SE, std::unordered_map<DFGEntry*, SEWrapper*> &LI,
+                              std::vector<int> &Remove) {
   for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
     if (auto *Entry = dyn_cast<TEntry>(Entries[j])) {
       int DSet = utils::DSUGetSet(j, DSU);
@@ -1059,22 +1092,30 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       for (int j = 0; j < (int) V.size(); ++j) { // NOLINT
         V[j]->ID = j;
       }
-      LinearInfo L = LI[Entry->Coal[0]];
-
+      auto *Raw = LI[Entry->Coal[0]];
+      LinearCombine *L = nullptr;
+      if (isa<LinearCombine>(Raw)) {
+        L = dyn_cast<LinearCombine>(Raw);
+      } else if (auto LI = dyn_cast<LoopInvariant>(Raw)) {
+        L = LI->toLinearCombine(&SE);
+      }
+      CHECK(L);
+      L = new LinearCombine(*L);
       auto Ptr = Entry->Coal[0]->underlyingInst()->getOperand(TEntry::PtrOperandIdx);
-      auto &LoopLI = L.TripCount;
       int DBits = Ptr->getType()->getPointerElementType()->getScalarSizeInBits();
-      LoopLI.insert(LoopLI.begin(), analysis::LinearInfo());
-      LoopLI.front().Base = SE.getConstant(APInt(64, Entry->Coal.size() - 1, true));
-      L.Coef.insert(L.Coef.begin(), analysis::LinearInfo());
-      L.Coef[0].Base = SE.getConstant(APInt(64, DBits / 8, true));
+      auto &TripCount = L->TripCount;
+      const auto *ExtraTC = SE.getConstant(APInt(64, Entry->Coal.size() - 1, true));
+      TripCount.insert(TripCount.begin(), new analysis::LoopInvariant(Entry, ExtraTC));
+      auto &Coef = L->Coef;
+      const auto *ExtraCoef = SE.getConstant(APInt(64, DBits / 8, true));
+      Coef.insert(L->Coef.begin(), new LoopInvariant(Entry, ExtraCoef));
       // If it used to be a constant, we need to make the higher dimensions to be zero-padded.
-      if (L.Coef.size() == 1) {
+      if (Coef.size() == 1) {
         auto *SCEVZero = SE.getConstant(APInt(64, 0, true));
-        analysis::LinearInfo ZeroDim = analysis::LinearInfo::loopInvariant(&SE, -1, SCEVZero);
-        L.Coef.reserve(LoopLI.size());
-        while (L.Coef.size() < LoopLI.size()) {
-          L.Coef.push_back(ZeroDim);
+        auto *ZeroCoef = new LoopInvariant(Entry, SCEVZero);
+        Coef.reserve(TripCount.size());
+        while (Coef.size() < TripCount.size()) {
+          Coef.push_back(ZeroCoef);
         }
       }
       LI[Entry] = L;
@@ -1165,14 +1206,16 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
           if (auto *IP = dyn_cast<InputPort>(DE)) {
             auto Iter = LI.find(IP);
             if (Iter != LI.end()) {
-              if (Iter->second.partialInvariant() == 0) {
-                if (!Tag) {
-                  IP->Tagged.push_back(Acc);
-                  Tag = IP;
-                } else if (IP->Tagged.size() >= Tag->Tagged.size()) {
-                  CHECK(Acc == Tag->Tagged.back());
-                  Tag->Tagged.pop_back();
-                  IP->Tagged.push_back(Acc);
+              if (auto *LC = dyn_cast<LinearCombine>(Iter->second)) {
+                if (LC->partialInvariant() == 0) {
+                  if (!Tag) {
+                    IP->Tagged.push_back(Acc);
+                    Tag = IP;
+                  } else if (IP->Tagged.size() >= Tag->Tagged.size()) {
+                    CHECK(Acc == Tag->Tagged.back());
+                    Tag->Tagged.pop_back();
+                    IP->Tagged.push_back(Acc);
+                  }
                 }
               }
             }
@@ -1199,10 +1242,22 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         }
       }
     }
-    for (auto *SMP : Graphs[i]->EntryFilter<SLPMemPort>()) {
-      for (auto *Acc : SMP->Tagged) {
-        ++Acc->ResetLevel;
-        DSA_LOG(ACC) << Acc->dump() << " +Reset@" << Acc->ResetLevel;
+    for (auto *IP : Graphs[i]->EntryFilter<InputPort>()) {
+      if (!IP->Tagged.empty()) {
+        DSA_LOG(ACC) << IP->dump(); 
+        auto Iter = DAR.LI[i].find(IP);
+        CHECK(Iter != DAR.LI[i].end());
+        DSA_LOG(ACC) << Iter->second << " " << Iter->second->toString();
+        auto *LC = dyn_cast<LinearCombine>(Iter->second);
+        CHECK(LC);
+        for (auto *Acc : IP->Tagged) {
+          if (isa<SLPMemPort>(IP)) {
+            ++Acc->ResetLevel;
+          }
+          CHECK(Acc->ResetLevel < (int) LC->Coef.size());
+          DSA_LOG(ACC) << Acc->dump() << ", Reset@" << Acc->ResetLevel;
+        }
+        DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP);
       }
     }
   }
@@ -1236,25 +1291,27 @@ void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
     auto *DFG = Graphs[i];
     auto &LI = DAR.LI[i];
     for (auto &Elem : LI) {
-      auto &Pattern = Elem.second;
-      FuseInfoExtractor FIE;
-      Elem.first->accept(&FIE);
-      if (FIE.CutOff == -1) {
-        FIE.CutOff = Pattern.TripCount.size() - 1;
-      }
-      CHECK(FIE.DBits != -1);
-      DSA_LOG(FUSE) << "Before: " << Pattern.toString() << ", CutOff: " << FIE.CutOff;
-      int Before = Pattern.Coef.size();
-      fuseInnerDimensions(Pattern, FIE.DBits / 8, DFG->getUnroll(), CGC.SE,
-                          Pattern.TripCount.size() - FIE.CutOff);
-      DSA_LOG(FUSE) << "After: " << Pattern.toString();
-      if (auto *IP = dyn_cast<InputPort>(Elem.first)) {
-        int Delta = Before - Pattern.Coef.size();
-        DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
-        DSA_LOG(FUSE) << IP->dump();
-        for (auto *Acc : IP->Tagged) {
-          Acc->ResetLevel -= Delta;
-          DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
+      if (auto *Pattern = dyn_cast<LinearCombine>(Elem.second)) {
+        FuseInfoExtractor FIE;
+        Elem.first->accept(&FIE);
+        if (FIE.CutOff == -1) {
+          FIE.CutOff = Pattern->TripCount.size() - 1;
+        }
+        CHECK(FIE.DBits != -1);
+        DSA_LOG(FUSE) << Pattern << " " << Elem.first->dump();
+        DSA_LOG(FUSE) << "Before: " << Pattern->toString() << ", CutOff: " << FIE.CutOff;
+        int Before = Pattern->Coef.size();
+        fuseInnerDimensions(*Pattern, FIE.DBits / 8, DFG->getUnroll(), CGC.SE,
+                            Pattern->TripCount.size() - FIE.CutOff);
+        DSA_LOG(FUSE) << "After: " << Pattern->toString();
+        if (auto *IP = dyn_cast<InputPort>(Elem.first)) {
+          int Delta = Before - Pattern->Coef.size();
+          DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
+          DSA_LOG(FUSE) << IP->dump();
+          for (auto *Acc : IP->Tagged) {
+            Acc->ResetLevel -= Delta;
+            DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
+          }
         }
       }
     }

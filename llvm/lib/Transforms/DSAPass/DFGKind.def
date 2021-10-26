@@ -1,4 +1,5 @@
-MACRO(DFGEntry),
+// DFGEntry {
+MACRO(DFGEntry), 
 
 // Computation {
 MACRO(ComputeStarts),
@@ -41,3 +42,7 @@ MACRO(OutPortEnds),
 // }
 MACRO(PortEnds),
 // }
+
+MACRO(EntryEnds),
+// }
+
