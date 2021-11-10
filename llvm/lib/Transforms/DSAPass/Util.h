@@ -6,6 +6,7 @@
 #include <tuple>
 
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -57,6 +58,10 @@ struct ModuleFlags {
    * file instructions.
    */
   DEFINE_FLAG(FUSION, 0)
+  /*!
+   * \brief If we want a dummy mapping for DFGs.
+   */
+  DEFINE_FLAG(DUMMY, 0)
 #undef DEFINE_FLAG
 
   ModuleFlags() {
@@ -67,6 +72,7 @@ struct ModuleFlags {
     getFlagTRIGGER();
     getFlagEXTRACT();
     getFlagFUSION();
+    getFlagDUMMY();
   }
 };
 
@@ -136,6 +142,10 @@ Constant *createConstant(LLVMContext &Context, uint64_t Val, int Bits = 64);
 Value *CeilDiv(Value *A, Value *B, Instruction *InsertBefore);
 
 Value *CeilDiv(Value *A, Value *B, IRBuilder<> *IB);
+
+Value *stripCast(Value *);
+
+const SCEV *stripCast(const SCEV *SE);
 
 std::string funcNameToDFGName(const StringRef &Name);
 

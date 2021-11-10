@@ -89,13 +89,13 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
     dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
     DSA_LOG(PASS) << i << ": Analyzing affine memory access...";
-    dsa::analysis::analyzeAffineMemoryAccess(DF, CGC, DAR);
+    DAR.initAffineCache(DF, CGC.SE);
     DSA_LOG(PASS) << i << ": Coalescing SLP memories...";
     dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
     DSA_LOG(PASS) << i << ": Analyzing accumulators...";
     dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);
     DSA_LOG(PASS) << i << ": Fusing affined dimensions...";
-    dsa::analysis::fuseAffineDimensions(DF, CGC, DAR);
+    DAR.fuseAffineDimensions(CGC.SE);
     DSA_LOG(PASS) << i << ": Extracting SPAD...";
     dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
     DSA_LOG(PASS) << i << ": Emitting DFG...";

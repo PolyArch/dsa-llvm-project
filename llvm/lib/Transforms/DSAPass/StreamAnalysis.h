@@ -13,6 +13,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
+#include "dsa/debug.h"
+
 #include "./Pass.h"
 #include "./RTTIUtils.h"
 #include "./Util.h"
@@ -23,10 +25,14 @@ namespace analysis {
 
 enum StreamAnalyzeTy {
   kSEWrapper,
-  kLoopInvariant,
+  kSWBinary,
+  kSWCast,
+  kIndirectPointer,
   kLinearCombine,
+  kLoopInvariant,
   kUnknown
 };
+
 
 /*!
  * \brief Streams are analyzed by the ScalarEvolution module.
@@ -69,6 +75,65 @@ struct SEWrapper {
 };
 
 /*!
+ * \brief a op b where op is either * or +.
+ */
+struct SWBinary : SEWrapper {
+  int Op{-1}; // Add, Mul
+  SEWrapper *A{nullptr};
+  SEWrapper *B{nullptr};
+
+  std::string toString() const override;
+
+  SWBinary(void *Parent, const SCEV *Raw, int Op) : SEWrapper(Parent, Raw), Op(Op) {
+    TyEnum = kSWBinary;
+  }
+
+  RTTI_CLASS_OF(SEWrapper, kSWBinary)
+};
+
+struct SWCast :SEWrapper {
+  const SCEVCastExpr *SCE;
+  SEWrapper *Stripped{nullptr};
+
+  Type *destTy() const;
+
+  Type *srcTy() const;
+
+  std::string toString() const override;
+
+  SWCast(void *Parent, const SCEV *Raw) : SEWrapper(Parent, Raw) {
+    SCE = dyn_cast<SCEVCastExpr>(Raw);
+    CHECK(SCE);
+    TyEnum = kSWCast;
+  }
+
+  RTTI_CLASS_OF(SEWrapper, kSWCast)
+};
+
+/*!
+ * \brief a[b[i]]
+ */
+struct IndirectPointer : SEWrapper {
+  /*!
+   * \brief Memory load to be analyzed.
+   */
+  LoadInst *Load{nullptr};
+  /*!
+   * \brief Analyzed pointer wrapper.
+   */
+  SEWrapper *Pointer{nullptr};
+
+  std::string toString() const override;
+
+  IndirectPointer(void *Parent, const SCEV *Raw,
+                  LoadInst *L) : SEWrapper(Parent, Raw), Load(L) {
+    TyEnum = kIndirectPointer;
+  }
+
+  RTTI_CLASS_OF(SEWrapper, kIndirectPointer)
+};
+
+/*!
  * \brief Assuming the index expression is affined,
  *        we have sum(Loops[i] * Coef[i]) + Base.
  *        More complicatedly, Base can recursively be another level of linear combine.
@@ -98,7 +163,7 @@ struct LinearCombine : SEWrapper {
   int partialInvariant() const;
 
   LinearCombine(void *Parent, const SCEV *Raw) : SEWrapper(Parent, Raw) {
-    this->TyEnum = kLinearCombine;
+    TyEnum = kLinearCombine;
   }
 
   const SCEV *base() override { return Base->base();}
@@ -121,16 +186,26 @@ struct LoopInvariant : SEWrapper {
    */
   const uint64_t *constInt() const;
 
-  LoopInvariant(void *Parent, const SCEV *Raw) : SEWrapper(Parent, Raw) {
-    this->TyEnum = kLoopInvariant;
-  }
+  /*!
+   * \brief Wrapped constructor.
+   */
+  static LoopInvariant *get(void *Parent, const SCEV *Raw);
 
   /*!
    * \brief A loop invariant can also be represented in a trivial linear combination.
    */
   LinearCombine *toLinearCombine(ScalarEvolution *SE);
 
+  std::string toString() const override;
+
   RTTI_CLASS_OF(SEWrapper, kLoopInvariant)
+
+ private:
+  LoopInvariant(void *Parent, const SCEV *Raw) : SEWrapper(Parent, Raw) {
+    TyEnum = kLoopInvariant;
+  }
+
+  static std::map<std::pair<void*, const SCEV*>, LoopInvariant*> UniqueInvariant;
 };
 
 
@@ -140,6 +215,27 @@ struct LoopInvariant : SEWrapper {
 SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
                             const std::vector<Loop *> &Loops,
                             const std::vector<SEWrapper *> &TripCount);
+
+/*!
+ * \brief
+ */
+IndirectPointer* analyzeIndirectPointer(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
+                                        const std::vector<Loop *> &Loops,
+                                        const std::vector<SEWrapper *> &TripCount);
+
+/*!
+ * \brief
+ */
+SWBinary *analyzeBinary(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
+                        const std::vector<Loop *> &Loops,
+                        const std::vector<SEWrapper *> &TripCount);
+
+/*!
+ * \brief
+ */
+SWCast *analyzeCast(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
+                    const std::vector<Loop *> &Loops,
+                    const std::vector<SEWrapper *> &TripCount);
 
 /*!
  * \brief Fuse continous inner-most memory access dimensions.

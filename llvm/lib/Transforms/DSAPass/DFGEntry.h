@@ -437,6 +437,9 @@ struct StreamOutPort : OutputPort {
 };
 
 struct IndMemPort : InputPort {
+  /*!
+   * \TODO(@were): Deprecate this!
+   */
   MemPort *Index;
   /*!
    * \brief The output port that generates indices.

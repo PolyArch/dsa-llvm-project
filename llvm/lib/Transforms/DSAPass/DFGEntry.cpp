@@ -114,7 +114,9 @@ std::string OutputPort::name(int VecIdx) {
   auto *Entry = this;
   CHECK(Entry);
   auto Vs = Entry->underlyingValues();
-  CHECK(Vs.size() == 1);
+  if (!isa<AtomicPortMem>(this)) {
+    CHECK(Vs.size() == 1) << Vs.size() << ": " << dump();
+  }
   std::ostringstream OSS;
   OSS << "sub" << Parent->ID << "_v" << Entry->ID << "_";
   if (VecIdx != -1 && Entry->shouldUnroll()) {
@@ -589,6 +591,9 @@ void Predicate::emitCond(std::ostringstream &OS) {
 
 AtomicPortMem *ComputeBody::isAtomic() {
   for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {
+    if (!Entry->Operand) {
+      continue;
+    }
     if (Entry->Op == underlyingInst()) {
       return Entry;
     }
@@ -643,6 +648,9 @@ int TBits(int Bits) { // NOLINT
 // If this IndMemPort is a source operand of atomic update, i.e. a[b[i]] ?= operand.
 bool IndMemPort::duplicated() {
   for (auto *Entry : Parent->EntryFilter<AtomicPortMem>()) {
+    if (!Entry->Operand) {
+      continue;
+    }
     if (Index->underlyingInst() == Entry->Index->underlyingInst()) {
       return true;
     }

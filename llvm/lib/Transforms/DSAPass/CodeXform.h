@@ -140,6 +140,7 @@ struct CodeGenContext {
 #include "intrin_impl.h"
 };
 
+
 /*!
  * \brief Inject configuration instruction.
  * \param CGC The injection wrapper.

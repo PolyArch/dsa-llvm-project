@@ -243,3 +243,17 @@ raw_ostream &operator<<(raw_ostream &OS, DFGEntry &DE) {
   }
   return OS;
 }
+
+Value *stripCast(Value *V) {
+  while (auto *CI = dyn_cast<CastInst>(V)) {
+    V = CI->getOperand(0);
+  }
+  return V;
+}
+
+const SCEV *stripCast(const SCEV *SE) {
+  while (auto *SCE = dyn_cast<SCEVCastExpr>(SE)) {
+    SE = SCE->getOperand(0);
+  }
+  return SE;
+}

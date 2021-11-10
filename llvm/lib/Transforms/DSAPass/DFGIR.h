@@ -24,6 +24,7 @@ class DFGFile;
 class DedicatedDFG;
 class TemporalDFG;
 class DFGBase;
+struct Predicate;
 
 struct AnalyzedRepeat {
 
@@ -62,27 +63,11 @@ struct DFGVisitor {
 /// The class of the base dfg
 class DFGBase {
 public:
-  enum DFGKind { Unknown, Dedicated, Temporal, DataMove };
 
-  /// DFG #ID in the .dfg file.
-  int ID{-1};
-  /// The DFGFile contains this DFG
-  DFGFile *Parent;
-  /// The instructions to be emitted as DFG
-  std::vector<DFGEntry*> Entries;
-  /// Find a value among the compute bodies
-  std::string ValueToOperandText(Value *Val, int Vec = -1);
-  /// To unify the comparisons
-  std::map<std::pair<Value *, Value *>, Predicate *> Comparison;
-
-  DFGKind Kind;
-
-  std::vector<Instruction *> InjectedCode;
-
-  DFGBase(DFGFile *);
+  enum DFGKind { Unknown, Dedicated, Temporal, Functional };
 
   friend class DFGFile;
-  friend struct DFGEntry;
+  friend class DFGEntry;
   friend struct StreamOutPort;
   friend struct ComputeBody;
   friend struct PortBase;
@@ -95,6 +80,23 @@ public:
   friend struct CtrlMemPort;
   friend struct CtrlSignal;
   friend struct AtomicPortMem;
+
+  /// DFG #ID in the .dfg file.
+  int ID{-1};
+  /// The DFGFile contains this DFG
+  DFGFile *Parent;
+  /// The instructions to be emitted as DFG
+  std::vector<DFGEntry*> Entries;
+  /// Find a value among the compute bodies
+  std::string ValueToOperandText(Value *Val, int Vec = -1);
+  /// To unify the comparisons
+  std::map<std::pair<Value *, Value *>, Predicate *> Comparison;
+
+  DFGKind TyEnum;
+
+  std::vector<Instruction *> InjectedCode;
+
+  DFGBase(DFGFile *);
 
   /// Get the current context
   virtual LLVMContext &getCtx();
@@ -132,16 +134,6 @@ public:
   virtual Instruction *DefaultIP();
   /// Find the predicate that can be merged into one.
   Predicate *FindEquivPredicate(Value *LHS, Value *RHS);
-
-  /// The helper function to calculate the actual repeat time.
-  /// Refer injection doc's example for more details.
-  /// If it is vectorized, it the prime should be ceiling divided.
-  /// If it is for a stream family port, it should be shift left 3 bits
-  // (since last 3 bits are for fixed point thing)
-  Value *ComputeRepeat(Value *Prime, Value *Wrapper, bool isVectorized,
-                       bool isPortConfig);
-  Value *ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized,
-                       bool isPortConfig);
 
   DFGKind getKind() const;
 
@@ -184,7 +176,7 @@ public:
   friend class DFGBase;
   friend class DedicatedDFG;
   friend class TemporalDFG;
-  friend struct DFGEntry;
+  friend class DFGEntry;
   friend struct StreamOutPort;
   friend struct MemPort;
   friend struct PortMem;
@@ -278,7 +270,7 @@ public:
   /// Blocks in this path of loop nest
   std::set<BasicBlock *> Blocks;
   /// The insert point of the instructions
-  BasicBlock *Preheader;
+  BasicBlock *Preheader{nullptr};
   /// Prologue IP
   Instruction *PrologueIP;
 
@@ -311,6 +303,8 @@ public:
 
   DedicatedDFG(DFGFile *, Loop *, int);
 
+  DedicatedDFG(DFGFile *, dsa::analysis::SEWrapper *SW);
+
   /// Inputs of this DFG
   virtual void dump(std::ostringstream &os) override;
   /// Return the blocks of the DFG
@@ -334,6 +328,6 @@ public:
   virtual void accept(dsa::DFGVisitor *) override;
 
   static bool classof(const DFGBase *DB) {
-    return DB->getKind() == Dedicated || DB->getKind() == DataMove;
+    return DB->getKind() == Dedicated;
   }
 };

@@ -24,6 +24,7 @@
 #include "llvm/Transforms/Utils/UnrollLoop.h"
 
 #include "CodeXform.h"
+#include "DFGEntry.h"
 #include "DFGIR.h"
 #include "StreamAnalysis.h"
 #include "Util.h"
@@ -64,43 +65,6 @@ bool CheckLoopInvariant(const SCEV *S, int From, // NOLINT
     }
   }
   return true;
-}
-
-Value *DFGBase::ComputeRepeat(Value *Prime, Value *Wrapper, bool IsVectorized,
-                              bool IsPortConfig) {
-  SCEVExpander Expander(*Parent->Query->SE,
-                        Parent->Func.getParent()->getDataLayout(), "");
-  auto &IB = *Parent->Query->IBPtr;
-  if (IB.GetInsertPoint() != DefaultIP()->getIterator())
-    IB.SetInsertPoint(DefaultIP());
-  if (IsVectorized) {
-    if (IsPortConfig) {
-      if (isOne(Wrapper)) {
-        auto *ShiftedPrime = IB.CreateShl(Prime, 3);
-        auto *VectorizedPrime = IB.CreateUDiv(ShiftedPrime, UnrollConstant());
-        return VectorizedPrime;
-      }
-      auto *CD = CeilDiv(Prime, UnrollConstant(), DefaultIP());
-      return IB.CreateShl(IB.CreateMul(CD, Wrapper), 3);
-    }
-    auto *CD = CeilDiv(Prime, UnrollConstant(), DefaultIP());
-    return IB.CreateMul(CD, Wrapper);
-  }
-  auto *Res = IB.CreateMul(Prime, Wrapper);
-  if (IsPortConfig) {
-    return IB.CreateShl(Res, 3);
-  }
-  return Res;
-}
-
-Value *DFGBase::ComputeRepeat(const AnalyzedRepeat &AR, bool IsVectorized,
-                              bool IsPortConfig) {
-  SCEVExpander Expander(*Parent->Query->SE,
-                        Parent->Func.getParent()->getDataLayout(), "");
-  if (!AR.Prime)
-    return createConstant(getCtx(), 1);
-  return ComputeRepeat(Expander.expandCodeFor(AR.Prime, nullptr, DefaultIP()),
-                       AR.Wrapped, IsVectorized, IsPortConfig);
 }
 
 /// Chech if a SCEV can be a repeat stretch
@@ -156,7 +120,9 @@ Instruction *DFGBase::DefaultIP() { assert(false && "Not supported yet!"); }
 
 Instruction *TemporalDFG::DefaultIP() { return IP; }
 
-Instruction *DedicatedDFG::DefaultIP() { return &Preheader->back(); }
+Instruction *DedicatedDFG::DefaultIP() { 
+  return Preheader ? &Preheader->back() : nullptr;
+}
 
 Accumulator *DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
   std::set<Value *> Visited{MP->underlyingInst()};
@@ -286,7 +252,7 @@ Value *DedicatedDFG::ProdTripCount(int x, Instruction *InsertBefore) { // NOLINT
 DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll) // NOLINT
     : DFGBase(Parent_), UnrollFactor(std::max(1, Unroll)) {
 
-  Kind = DFGBase::Dedicated;
+  TyEnum = DFGBase::Dedicated;
 
   if (GetUnrollMetadata(LI->getLoopID(), "llvm.loop.ss.datamove")) {
     LLVM_DEBUG(DSA_INFO << "A data-move 'DFG'\n");
@@ -356,10 +322,10 @@ Loop *DedicatedDFG::OuterMost() { return LoopNest.back(); }
 
 DFGBase::DFGBase(DFGFile *Parent_) : Parent(Parent_) { // NOLINT
   ID = Parent_->DFGs.size();
-  Kind = DFGBase::Unknown;
+  TyEnum = DFGBase::Unknown;
 }
 
-DFGBase::DFGKind DFGBase::getKind() const { return Kind; }
+DFGBase::DFGKind DFGBase::getKind() const { return TyEnum; }
 
 TemporalDFG::TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin,
                          IntrinsicInst *End)
@@ -382,7 +348,7 @@ TemporalDFG::TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin,
     }
   }
 
-  Kind = DFGBase::Temporal;
+  TyEnum = DFGBase::Temporal;
 }
 
 void TemporalDFG::dump(std::ostringstream &OS) {
@@ -769,3 +735,14 @@ std::string DFGBase::nameOf(Value *Val, int VecIdx) {
   }
   return OSS.str();
 }
+
+DedicatedDFG::DedicatedDFG(DFGFile *P, dsa::analysis::SEWrapper *SW) : DFGBase(P) {
+  DSA_INFO << SW->toString();
+  auto *IP = dyn_cast<dsa::analysis::IndirectPointer>(SW);
+  CHECK(IP) << SW->toString();
+  auto *SU = dyn_cast<SCEVUnknown>(SW->Raw);
+  auto *Load = dyn_cast<LoadInst>(SU->getValue());
+  Entries.push_back(new MemPort(this, Load));
+  Entries.push_back(new OutputPort(this, Load));
+}
+

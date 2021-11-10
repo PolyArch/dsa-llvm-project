@@ -4,7 +4,9 @@
 #include "Util.h"
 
 #include "dsa-ext/rf.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ScopedPrinter.h"
+#include <unordered_map>
 
 // raw_ostream &operator<<(raw_ostream &os, DFGEntry &DE) {
 //   os << "# [" << dsa::xform::KindStr[DE.Kind] << "]" << " DFG" <<
@@ -49,6 +51,17 @@ int tagBitmask(int ResetLevel) {
 }
 
 } // namespace
+
+void Indirect1D::emitIntrinsic(xform::CodeGenContext &CGC) {
+}
+
+void Indirect2D::emitIntrinsic(xform::CodeGenContext &CGC) {
+  auto *IB = CGC.IB;
+  auto &SEE = CGC.SEE;
+  CGC.CONFIG_PARAM(DSARF::L2D, SEE.expandCodeFor(L2D), false, DSARF::I1D, IB->getInt64(1), false);
+  CGC.SS_INDIRECT_2D_READ(DestPort, DType, OffsetPort, CGC.SEE.expandCodeFor(SAR->Raw), -1, IType,
+                          -1, CGC.SEE.expandCodeFor(L1D->Raw), IB->getInt64(0), DMT_DMA);
+}
 
 void eliminateTemporal(Function &F) {
   std::vector<Instruction *> ToRemove;
@@ -287,6 +300,10 @@ struct DFGPrinter : dsa::DFGVisitor {
               CHECK(Name.empty());
               Name = MP->name(-1);
             }
+            void Visit(IndMemPort *IMP) {
+              CHECK(Name.empty());
+              Name = IMP->name(-1);
+            }
             std::string Name;
           };
           TagNamer TN;
@@ -295,7 +312,7 @@ struct DFGPrinter : dsa::DFGVisitor {
             auto Iter = std::find(IP->Tagged.begin(), IP->Tagged.end(), Acc);
             if (Iter != IP->Tagged.end()) {
               IP->accept(&TN);
-              OS << ", ctrl=$" << TN.Name << "Tag" << "{";
+              OS << ", ctrl=$" << TN.Name << "State" << "{";
             }
           }
           CHECK(!TN.Name.empty()) << Acc->dump() << " not tagged!";
@@ -369,9 +386,9 @@ struct DFGPrinter : dsa::DFGVisitor {
       if (IP->shouldUnroll()) {
         OS << "[" << IP->Parent->getUnroll() << "]";
       }
-      if (auto *MP = dyn_cast<MemPort>(IP)) {
-        if (!MP->Tagged.empty()) {
-          OS << " Tagged";
+      if (isa<MemPort>(IP) || isa<IndMemPort>(IP)) {
+        if (!IP->Tagged.empty()) {
+          OS << " stated";
         }
       }
       OS << "\n";
@@ -434,7 +451,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
       OS << "Input" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
       if (!SMP->Tagged.empty()) {
-        OS << " Tagged";
+        OS << " stated";
       }
       OS << "\n";
       int Idx = 0;
@@ -476,6 +493,8 @@ struct DFGPrinter : dsa::DFGVisitor {
         OS << "Input" << DBits << ": Operand_" << Name << "\n";
         OS << Name << " = Operand_" << Name << "\n";
         OS << "Output" << DBits << ": " << Name << "\n";
+      } else if (!APM->Operand) {
+        Visit(static_cast<OutputPort*>(APM));
       } else {
         CHECK(false) << "Not supported yet!";
       }
@@ -586,13 +605,39 @@ struct DFGPrinter : dsa::DFGVisitor {
 
     // TODO(@were): Move this to a DFG.
     for (auto *Elem : DB->EntryFilter<IndMemPort>()) {
+      auto *DS = analysis::extractStreamIntrinsics(Elem, CGC, DAR);
+      bool Penetrate = !Elem->Tagged.empty() && isa<Indirect1D>(DS);
       OS << "\n\n----\n\n";
       OS << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
-         << ": indirect_in_" << DB->ID << "_" << Elem->ID << "\n";
+         << ": indirect_in_" << DB->ID << "_" << Elem->ID;
+      if (Penetrate) {
+        OS << " stated";
+      }
+      OS << "\n";
       OS << "indirect_out_" << DB->ID << "_" << Elem->ID << " = "
          << "indirect_in_" << DB->ID << "_" << Elem->ID << "\n";
       OS << "Output" << Elem->Index->Load->getType()->getScalarSizeInBits()
-         << ": indirect_out_" << DB->ID << "_" << Elem->ID << "\n";
+         << ": indirect_out_" << DB->ID << "_" << Elem->ID;
+      if (Penetrate) {
+        OS << " state=indirect_in_" << DB->ID << "_" << Elem->ID;
+      }
+      OS << "\n";
+      if (auto *S2D = dyn_cast<Indirect2D>(DS)) {
+        if (!isa<analysis::LoopInvariant>(S2D->L1D)) {
+          auto *DFG =  new DedicatedDFG(DB->Parent, S2D->L1D);
+          S2D->L1DDFG = DFG;
+          auto *DD = dyn_cast<DedicatedDFG>(DB);
+          CHECK(DD);
+          DFG->LoopNest = DD->LoopNest;
+          DFG->LoopNest.erase(DFG->LoopNest.begin());
+          DB->Parent->DFGs.push_back(DFG);
+          DAR.DLI.push_back(DAR.DLI[Elem->Parent->ID]);
+          DAR.DLI.back().TripCount.erase(DAR.DLI.back().TripCount.begin());
+          DAR.DLI.back().LoopNest.erase(DAR.DLI.back().LoopNest.begin());
+          auto *SW = DAR.affineMemoryAccess(S2D->L1DDFG->Entries[0], CGC.SE, false);
+          DSA_INFO << SW->toString();
+        }
+      }
     }
   }
 
@@ -610,16 +655,24 @@ struct DFGPrinter : dsa::DFGVisitor {
    * \brief The scalar evolution for access analysis.
    */
   ScalarEvolution &SE;
+  /*!
+   * \brief
+   */
+  std::unordered_map<DFGEntry*, xform::DataStream*> &Streams;
 
-  DFGPrinter(raw_ostream &OS, ScalarEvolution &SE) : OS(OS), SE(SE) {}
+  CodeGenContext &CGC;
+  analysis::DFGAnalysisResult &DAR;
+
+  DFGPrinter(raw_ostream &OS, CodeGenContext &CGC, analysis::DFGAnalysisResult &DAR)
+    : OS(OS), SE(CGC.SE), Streams(DAR.Streams), CGC(CGC), DAR(DAR) {}
 };
 
 void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR,
              CodeGenContext &CGC) {
-  auto Graphs = DFG->DFGFilter<DFGBase>();
+  auto &Graphs = DFG->DFGs;
   auto &SI = DAR.SI;
   for (int i = 0; i < (int)Graphs.size(); ++i) { // NOLINT
-    DFGPrinter DP(OS, CGC.SE);
+    DFGPrinter DP(OS, CGC, DAR);
     auto *Elem = Graphs[i];
     if (i) {
       OS << "----\n";
@@ -747,7 +800,7 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
       Stretch = IB->CreateMul(Stretch, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
       Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
     }
-    auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Base), IB->getInt64(1));
+    auto *Dim0 = SEE.expandCodeFor(Base);
     Repeat = CeilDiv(Dim0, IB->getInt64(Unroll), IB);
     DSA_LOG(CODEGEN) << *Repeat;
     break;
@@ -755,9 +808,9 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
   case 2: {
     auto *Outer = dyn_cast<analysis::LoopInvariant>(Loops[1]);
     CHECK(Outer);
-    auto *Dim1 = IB->CreateAdd(SEE.expandCodeFor(Outer->Raw), IB->getInt64(1));
+    auto *Dim1 = SEE.expandCodeFor(Outer->Raw);
     if (auto *LC = dyn_cast<analysis::LinearCombine>(Loops[0])) {
-      auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(LC->Base->Raw), IB->getInt64(1));
+      auto *Dim0 = SEE.expandCodeFor(LC->Base->Raw);
       if (Unroll == 1) {
         // (Dim0 + Dim0 + (Dim1 - 1) * Stretch) * Dim1 / 2
         Stretch = SEE.expandCodeFor(LC->Coef[1]->Raw);
@@ -771,7 +824,7 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
         CHECK(false) << "Support this later...";
       }
     } else {
-      auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Loops[0]->Raw), IB->getInt64(1));
+      auto *Dim0 = SEE.expandCodeFor(Loops[0]->Raw);
       Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
       DSA_LOG(CODEGEN) << *Repeat;
     }
@@ -783,9 +836,17 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
   return {Repeat, Stretch};
 }
 
-void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearCombine &LI,
-                            int Port, int Unroll, int DType, MemoryOperation MO,
-                            Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
+
+void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
+                              int Port, int Unroll, int DType, MemoryOperation MO,
+                              Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
+  analysis::LinearCombine *LCPtr = dyn_cast<analysis::LinearCombine>(SW);
+  if (!LCPtr) {
+    auto *LI = dyn_cast<analysis::LoopInvariant>(SW);
+    CHECK(LI) << SW->toString();
+    LCPtr = LI->toLinearCombine(&CGC.SE);
+  }
+  analysis::LinearCombine &LC = *LCPtr;
 
   auto InjectRepeat = [&CGC](analysis::LinearCombine &LI, int Port, int Unroll) {
     auto &Loops = LI.TripCount;
@@ -831,7 +892,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearCombine &LI,
     std::vector<Value*> N;
     std::vector<Value*> Stride;
     for (int j = i; j < (int) Loops.size(); ++j) { // NOLINT
-      N.push_back(IB->CreateAdd(SEE.expandCodeFor(Loops[j]->base()), IB->getInt64(1)));
+      N.push_back(SEE.expandCodeFor(Loops[j]->base()));
       Stride.push_back(SEE.expandCodeFor(LC->Coef[j]->base()));
     }
     switch (Dim) {
@@ -923,10 +984,10 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearCombine &LI,
   };
 
   if (MO == MemoryOperation::DMO_Read) {
-    InjectRepeat(LI, Port, Unroll);
+    InjectRepeat(LC, Port, Unroll);
   }
 
-  LinearInstantiation(&LI, Port, MO, P, SI, BuffetIdx, DType);
+  LinearInstantiation(&LC, Port, MO, P, SI, BuffetIdx, DType);
 }
 
 
@@ -954,7 +1015,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         auto DType = MP->Load->getType()->getScalarSizeInBits() / 8;
         if (Ptr0 == Ptr1) {
           DSA_LOG(CODEGEN) << "Recurrencing: \n" << *MP->Load << "\n" << *PM->Store;
-          auto *FLI = DAR.LI[MP->Parent->ID][MP];
+          auto *FLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
           auto *LC = dyn_cast<analysis::LinearCombine>(FLI);
           CHECK(LC);
           LC = new analysis::LinearCombine(*LC);
@@ -984,22 +1045,22 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           LC->TripCount.pop_back();
 
           injectLinearStreamImpl(
-            CGC, *LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
+            CGC, LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
             (Padding) MP->fillMode(), SI, -1);
 
           if (LoopN.size() == 2) {
             // TODO(@were): Support stretch later.
             auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0]->base());
-            auto *OuterN = CGC.SEE.expandCodeFor(LoopN[1]->base());
+            auto *OuterN = IB->CreateSub(CGC.SEE.expandCodeFor(LoopN[1]->base()), IB->getInt64(1));
             CGC.SS_RECURRENCE(
               PM->SoftPortNum, MP->SoftPortNum,
-              IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN), DType);
+              IB->CreateMul(InnerN, OuterN), DType);
           } else {
             CHECK(false) << "Not supported yet";
           }
 
           injectLinearStreamImpl(
-            CGC, *LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1);
+            CGC, LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1);
 
           // Performance Model
           int II = 1;
@@ -1025,7 +1086,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           }
           PM->Meta.set("dest", "localport");
           PM->Meta.set("dest", MP->name());
-          {
+          if (Conc != -1) {
             std::ostringstream OSS;
             OSS << Conc * DType;
             PM->Meta.set("conc", OSS.str());
@@ -1083,33 +1144,104 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         CGC.SS_CONFIG_PORT(INDs[i], DPF_PortBroadcast, true);
       }
 
-      auto *Index = IMP->Index->Load->getPointerOperand();
-      auto Analyzed = IMP->Parent->AnalyzeDataStream(
-          Index, IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
-      auto &LI = DAR.LI[IMP->Parent->ID];
-      CHECK(LI.find(IMP->Index) != LI.end());
-      auto *IdxLI = LI[IMP->Index];
-      auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
-      if (!LC) {
-        LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
+      int DType = IMP->Load->getType()->getScalarSizeInBits() / 8;
+
+      // (DType * (?)) + %SAR
+      auto *IdxLI = DAR.affineMemoryAccess(IMP, CGC.SE, false);
+      int IType = 8;
+      analysis::SEWrapper *Idx = nullptr;
+
+      if (auto *SA = dyn_cast<analysis::SWBinary>(IdxLI)) {
+        CHECK(SA && SA->Op == 0) << IdxLI->toString();
+        Idx = SA->A;
+        // const SCEV *SAR = SA->B->Raw;
+        // Strip the Coef
+        if (DType == 1) {
+          CHECK(false) << Idx->toString();
+        } else {
+          auto *SM = dyn_cast<analysis::SWBinary>(Idx);
+          CHECK(SM);
+          if (const auto *SC = dyn_cast<SCEVConstant>(SM->A->Raw)) {
+            CHECK(SC->getAPInt().getSExtValue() == DType);
+          } else {
+            CHECK(false);
+          }
+          Idx = SM->B;
+        }
+        if (const auto *SCE = dyn_cast<analysis::SWCast>(Idx)) {
+          IType = SCE->srcTy()->getScalarSizeInBits() / 8;
+          Idx = SCE->Stripped;
+        }
+      } else if (auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI)) {
+        auto *Add = dyn_cast<analysis::SWBinary>(LC->Base);
+        CHECK(Add) << LC->Base->toString();
+        auto *SAR = dyn_cast<analysis::LoopInvariant>(Add->B);
+        auto *Mul = dyn_cast<analysis::SWBinary>(Add->A);
+        CHECK(Mul) << Add->A->toString();
+        auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Mul->B);
+        CHECK(IndPtr) << Mul->B->toString();
+        injectLinearStreamImpl(CGC, IndPtr->Pointer, IMP->Index->SoftPortNum,
+                               IMP->Parent->getUnroll(), IType, DMO_Read, DP_NoPadding, SI, -1);
+        int LengthPort = -1;
+        Value *N2D = nullptr;
+        if (auto *DS = analysis::extractStreamIntrinsics(IMP, CGC, DAR)) {
+          if (auto *I2D = dyn_cast<Indirect2D>(DS)) {
+            if (I2D->L1DDFG) {
+              DSA_LOG(CODEGEN) << "L1D Loading: ";
+              I2D->L1DDFG->Entries[0]->accept(this);
+              auto *OP = dyn_cast<OutputPort>(I2D->L1DDFG->Entries[1]);
+              CHECK(OP);
+              LengthPort = OP->SoftPortNum;
+              DSA_LOG(CODEGEN) << "N1D from: " << LengthPort;
+              N2D = IB->getInt64(0);
+            }
+          }
+        }
+        if (!N2D) {
+          N2D = CGC.SEE.expandCodeFor(LC->TripCount[0]->Raw);
+        }
+        if (!IMP->Tagged.empty()) {
+          DSA_INFO << IMP->Tagged.size();
+          int ResetLevel = analysis::resetLevel(IMP);
+          DSA_LOG(CODEGEN) << "Config BMSS: " << ResetLevel << ", " << tagBitmask(ResetLevel);
+          CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), false);
+        }
+        DSA_LOG(CODEGEN)
+          << "[Indirect 2D] Port: " << IMP->SoftPortNum << ", DType: " << DType
+          << ", SARPort: " << IMP->IndexOutPort << ", SAR: " << *SAR->Raw
+          << ", IType: " << IType << ", InnerN: " << LC->TripCount[0]->toString();
+        CGC.CONFIG_PARAM(DSARF::L2D, CGC.SEE.expandCodeFor(SAR->TripCount[0]->Raw), false,
+                         DSARF::I1D, IB->getInt64(1), false);
+        CGC.SS_INDIRECT_2D_READ(IMP->SoftPortNum, DType, IMP->IndexOutPort,
+                                CGC.SEE.expandCodeFor(SAR->Raw), -1, IType, LengthPort, N2D,
+                                IB->getInt64(0), DMT_DMA);
+        IMP->IntrinInjected = true;
+        return;
       }
-      injectLinearStreamImpl(CGC, *LC, IMP->Index->SoftPortNum,
-                             IMP->Parent->getUnroll(),
-                             IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
+
+      auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Idx);
+      bool Pene = false;
+      if (!IMP->Tagged.empty()) {
+        int ResetLevel = analysis::resetLevel(IMP);
+        DSA_LOG(CODEGEN) << "Config BMSS: " << ResetLevel << ", " << tagBitmask(ResetLevel);
+        CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), true);
+        Pene = true;
+      }
+      injectLinearStreamImpl(CGC, IndPtr->Pointer, IMP->Index->SoftPortNum,
+                             IMP->Parent->getUnroll(), IType,
                              DMO_Read, DP_NoPadding, SI, -1);
+
+      auto *ILC = dyn_cast<analysis::LinearCombine>(IndPtr->Pointer);
+      Value *N = CGC.SEE.expandCodeFor(productTripCount(ILC->TripCount, &CGC.SE));
 
       for (size_t i = 0; i < Together.size(); ++i) { // NOLINT
         auto *Cur = Together[i];
-        int IBits = Cur->Index->Load->getType()->getScalarSizeInBits();
-        auto *Num = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
-                                  IB->getInt64(IBits / 8));
         auto *GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
         auto MT = SI.isSpad(GEP->getOperand(0)) ? DMT_SPAD : DMT_DMA;
         CGC.INSTANTIATE_1D_INDIRECT(
             Cur->SoftPortNum, Cur->Load->getType()->getScalarSizeInBits() / 8,
             Cur->IndexOutPort, Cur->Index->Load->getType()->getScalarSizeInBits() / 8,
-            GEP->getOperand(0), Cur->Load->getType()->getScalarSizeInBits() / 8,
-            Num, MT, DMO_Read);
+            GEP->getOperand(0), IB->getInt64(0), N, MT, DMO_Read, Pene && (i == 0), false);
 
         // TODO: Support indirect read on the SPAD(?)
         Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)DMT_DMA]);
@@ -1121,8 +1253,6 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
     }
 
     void Visit(MemPort *MP) override {
-      auto *IB = CGC.IB;
-      IB->SetInsertPoint(MP->Parent->DefaultIP());
 
       if (MP->IntrinInjected)
         return;
@@ -1137,17 +1267,13 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
       auto Cond = [MP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP; };
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
-      auto *IdxLI = DAR.LI[MP->Parent->ID][MP];
+      auto *IdxLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
       if (!MP->Tagged.empty()) {
         int ResetLevel = analysis::resetLevel(MP);
         DSA_LOG(CODEGEN) << "Config BMSS: " << tagBitmask(ResetLevel);
         CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), true);
       }
-      auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
-      if (!LC) {
-        LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
-      }
-      injectLinearStreamImpl(CGC, *LC, Port, DFG->getUnroll(), DType, DMO_Read,
+      injectLinearStreamImpl(CGC, IdxLI, Port, DFG->getUnroll(), DType, DMO_Read,
                              (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin());
 
       if (!MP->Tagged.empty()) {
@@ -1173,7 +1299,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto Cond = [MP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP; };
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
       CHECK(SMP->Coal.size() >= 2);
-      auto *IdxLI = DAR.LI[SMP->Parent->ID][SMP];
+      auto *IdxLI = DAR.affineMemoryAccess(SMP, CGC.SE, false);
       auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
       if (!LC) {
         LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
@@ -1184,7 +1310,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), true);
         CHECK(ResetLevel < (int) LC->Coef.size()) << ResetLevel << ", " << LC->Coef.size();
       }
-      injectLinearStreamImpl(CGC, *LC, Port, DFG->getUnroll(), DType, DMO_Read,
+      injectLinearStreamImpl(CGC, LC, Port, DFG->getUnroll(), DType, DMO_Read,
                              (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin());
       if (!SMP->Tagged.empty()) {
         CGC.CONFIG_PARAM(DSARF::BMSS, (int) 0, false);
@@ -1201,12 +1327,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       CGC.IB->SetInsertPoint(DFG->DefaultIP());
       CGC.SEE.setInsertPoint(DFG->DefaultIP());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
-      auto *IdxLI = DAR.LI[PM->Parent->ID][PM];
-      auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
-      if (!LC) {
-        LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
-      }
-      injectLinearStreamImpl(CGC, *LC, PM->SoftPortNum, DFG->getUnroll(), DType,
+      auto *IdxLI = DAR.affineMemoryAccess(PM, CGC.SE, false);
+      injectLinearStreamImpl(CGC, IdxLI, PM->SoftPortNum, DFG->getUnroll(), DType,
                              DMO_Write, DP_NoPadding, SI, -1);
 
       PM->IntrinInjected = true;
@@ -1220,12 +1342,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       CGC.SEE.setInsertPoint(DFG->DefaultIP());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
       CHECK(SPM->Coal.size() >= 2) << SPM->Coal.size();
-      auto *IdxLI = DAR.LI[SPM->Parent->ID][SPM];
-      auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
-      if (!LC) {
-        LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
-      }
-      injectLinearStreamImpl(CGC, *LC, SPM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
+      auto *IdxLI = DAR.affineMemoryAccess(SPM, CGC.SE, false);
+      injectLinearStreamImpl(CGC, IdxLI, SPM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
                              DP_NoPadding, SI, -1);
 
       SPM->IntrinInjected = true;
@@ -1240,6 +1358,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto &TripCount = DAR.DLI[IC->Parent->ID].TripCount;
       auto CR = injectComputedRepeat(CGC, TripCount, TripCount.size(), IC->Parent->getUnroll());
       CHECK(!CR.second) << "Should not be stretched!";
+      DSA_LOG(CODEGEN) << *IC->Val << " x " << *CR.first;
       CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first,
                    IC->Val->getType()->getScalarSizeInBits() / 8);
       IC->IntrinInjected = true;
@@ -1340,8 +1459,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         }
         Value *N = IB->getInt64(1);
         for (; i < (int) DLI.LoopNest.size(); ++i) {
-          N = IB->CreateMul(N, IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[i]->base()),
-                                             IB->getInt64(1)));
+          N = IB->CreateMul(N, SEE.expandCodeFor(DLI.TripCount[i]->base()));
         }
         CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, N, Bytes);
       } else if (isa<TemporalDFG>(SIP->Parent)) {
@@ -1371,8 +1489,10 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         APM->Meta.set("cmd", "0.1");
         return;
       }
-      // // TODO: Support OpCode() == 3.
-      CHECK(APM->OpCode == 0);
+      // TODO: Support OpCode() == 3.
+      if (APM->Operand) {
+        CHECK(APM->OpCode == 0);
+      }
 
       int IdxPort = -1;
       auto *IB = CGC.IB;
@@ -1385,16 +1505,9 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         if (auto *IMP = dyn_cast<IndMemPort>(DFG->Entries[i])) {
           if (IMP->Index->underlyingInst() == APM->Index->underlyingInst()) {
             auto *MP = IMP->Index;
-            auto &LI = DAR.LI[DFG->ID];
-
-            CHECK(LI.find(MP) != LI.end()) << MP->ID << ": " << MP->dump();
+            auto *IdxLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
             int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-            analysis::LinearCombine *LC = dyn_cast<analysis::LinearCombine>(LI[MP]);
-            if (!LC) {
-              auto *LoopI = dyn_cast<analysis::LoopInvariant>(LI[MP]);
-              LC = LoopI->toLinearCombine(nullptr);
-            }
-            injectLinearStreamImpl(CGC, *LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
+            injectLinearStreamImpl(CGC, IdxLI, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
                                    (Padding) MP->fillMode(), SI, -1);
             IdxPort = IMP->IndexOutPort;
           }
@@ -1420,8 +1533,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto *GEP = dyn_cast<GetElementPtrInst>(APM->Store->getPointerOperand());
       CHECK(GEP);
       CGC.INSTANTIATE_1D_INDIRECT(APM->SoftPortNum, DType, IdxPort, IdxType,
-                                  GEP->getOperand(0), DType,
-                                  N, DMT_SPAD, DMO_Add);
+                                  GEP->getOperand(0), IB->getInt64(0),
+                                  N, DMT_SPAD, DMO_Add, false, false);
       DSA_LOG(CODEGEN)
         << "[AtomicSpad] WritePort: " << APM->SoftPortNum << ", DType: " << DType
         << ", IdxPort: " << IdxPort << ", IdxType: " << IdxType << ", Start: " << GEP->getOperand(0)
@@ -1441,6 +1554,9 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
     auto *DFG = DFGs[i];
     UpdateStreamInjector USI(CGC, DAR);
     StreamIntrinsicInjector SII(CGC, DAR);
+    if (!DFG->DefaultIP()) {
+      continue;
+    }
     CGC.IB->SetInsertPoint(DFG->DefaultIP());
     CGC.SEE.setInsertPoint(DFG->DefaultIP());
     for (auto *Elem : ReorderEntries(DFG)) {
@@ -1451,8 +1567,11 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
     }
   }
 
-  for (auto &DD : DFGs) {
-    for (auto &PB : DD->EntryFilter<PortBase>()) {
+  for (auto &DFG : DFGs) {
+    if (!DFG->DefaultIP()) {
+      continue;
+    }
+    for (auto &PB : DFG->EntryFilter<PortBase>()) {
       CHECK(PB->IntrinInjected) << PB->dump();
     }
   }
