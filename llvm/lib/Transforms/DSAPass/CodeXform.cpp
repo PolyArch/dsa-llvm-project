@@ -518,13 +518,15 @@ struct DFGPrinter : dsa::DFGVisitor {
          << P->Cond[0]->getOperand(0)->getType()->getScalarSizeInBits() << "(";
       for (size_t i = 0; i < P->Cond[0]->getNumOperands(); ++i) { // NOLINT
         auto *Val = P->Cond[0]->getOperand(i);
-        if (i)
+        if (i) {
           OS << ", ";
+        }
         if (auto *EntryOp = P->Parent->InThisDFG(Val)) {
           OS << EntryOp->name(-1);
           CtrlBit.addControlledMemoryStream(i, EntryOp);
-          if (auto *CMP = dyn_cast<CtrlMemPort>(EntryOp))
+          if (auto *CMP = dyn_cast<CtrlMemPort>(EntryOp)) {
             CMP->ForPredicate = true;
+          }
         } else {
           OS << ValueToOperandText(Val);
         }
@@ -671,6 +673,12 @@ void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR,
              CodeGenContext &CGC) {
   auto &Graphs = DFG->DFGs;
   auto &SI = DAR.SI;
+  for (int i = 0; i < (int)Graphs.size(); ++i) { // NOLINT
+    DSA_LOG(DFG) << "========== " << i << " ==========";
+    for (auto *Elem : Graphs[i]->Entries) {
+      DSA_LOG(DFG) << Elem->dump();
+    }
+  }
   for (int i = 0; i < (int)Graphs.size(); ++i) { // NOLINT
     DFGPrinter DP(OS, CGC, DAR);
     auto *Elem = Graphs[i];

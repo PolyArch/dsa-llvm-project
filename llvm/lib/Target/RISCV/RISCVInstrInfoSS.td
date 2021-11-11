@@ -36,8 +36,8 @@ def SS_CFG_PARAM : RVInstS<3, OPC_CUSTOM_0,
 let hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
 def SS_WAIT : RVInstI<6, OPC_CUSTOM_1,
                     (outs GPR:$rd),
-                    (ins simm12:$simm12),
-                    "ss_wait", "$rd, $simm12">,
+                    (ins GPR:$rs1, simm12:$simm12),
+                    "ss_wait", "$rd, $rs1, $simm12">,
                     Sched<[SSRead, SSWrite]>;
 
 let hasSideEffects = 1, mayLoad = 1, mayStore = 1 in

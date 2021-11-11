@@ -67,6 +67,10 @@ struct DFGEntryAnalyzer : DFGVisitor {
    * \brief The result of an analyzer.
    */
   DominatorTree *DT;
+  /*!
+   * \brief
+   */
+  ScalarEvolution &SE;
 
   /*!
    * \brief Find all the PHI function that is essentially the same value as the
@@ -145,22 +149,28 @@ struct DFGEntryAnalyzer : DFGVisitor {
         if (!Casted)
           return nullptr;
 
-        if (!DD)
+        if (!DD) {
           return nullptr;
+        }
+
 
         {
-          bool SimpleLoop = false;
-          auto *BI = dyn_cast<BranchInst>(&DD->InnerMost()->getLoopLatch()->back());
-          auto *Latch = DD->InnerMost()->getLoopLatch();
-          CHECK(BI);
-          for (auto *BB : BI->successors()) {
-            if (BB == Latch) {
-              SimpleLoop = true;
-            }
-          }
-          if (SimpleLoop) {
+          auto *IdxSE = SE.getSCEV(Load->getPointerOperand());
+          if (isa<SCEVAddRecExpr>(IdxSE) || isa<SCEVConstant>(IdxSE)) {
             return nullptr;
           }
+          // bool SimpleLoop = false;
+          // auto *BI = dyn_cast<BranchInst>(&DD->InnerMost()->getLoopLatch()->back());
+          // auto *Latch = DD->InnerMost()->getLoopLatch();
+          // CHECK(BI);
+          // for (auto *BB : BI->successors()) {
+          //   if (BB == Latch) {
+          //     SimpleLoop = true;
+          //   }
+          // }
+          // if (SimpleLoop) {
+          //   return nullptr;
+          // }
         }
 
         std::set<Instruction *> Equiv;
@@ -570,7 +580,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
   }
 
-  DFGEntryAnalyzer(xform::CodeGenContext &CGC) : DT(CGC.DT) {}
+  DFGEntryAnalyzer(xform::CodeGenContext &CGC) : DT(CGC.DT), SE(CGC.SE) {}
 };
 
 void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
@@ -988,6 +998,7 @@ int64_t indexPairOffset(SEWrapper *ASW, SEWrapper *BSW, ScalarEvolution &SE, boo
 void DFGAnalysisResult::initAffineCache(DFGFile &DF, ScalarEvolution &SE) {
   for (auto *DFG : DF.DFGs) {
     for (auto *Elem : DFG->Entries) {
+      DSA_INFO << Elem->dump();
       affineMemoryAccess(Elem, SE, true);
     }
   }
