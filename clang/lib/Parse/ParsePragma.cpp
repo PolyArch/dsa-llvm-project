@@ -3679,7 +3679,7 @@ void PragmaStreamSpecializeHandler::HandlePragma(Preprocessor &PP,
     return;
   }
 
-  auto Info = new (PP.getPreprocessorAllocator()) SSInfo;
+  auto *Info = new (PP.getPreprocessorAllocator()) SSInfo;
   Info->OffloadTo.startToken();
 
   auto *Str = Tok.getIdentifierInfo();
@@ -3687,10 +3687,10 @@ void PragmaStreamSpecializeHandler::HandlePragma(Preprocessor &PP,
   if (Str->isStr("config") || Str->isStr("stream")) {
     PP.Lex(Tok);
 
-    if (!Str->isStr("config")) {
+    if (Str->isStr("stream")) {
 
       if (Tok.is(tok::identifier)) {
-        auto TII = Tok.getIdentifierInfo();
+        auto *TII = Tok.getIdentifierInfo();
         if (TII->isStr("barrier") || TII->isStr("nonblock")) {
           Info->Args.push_back(std::make_pair(Tok, TokenVec({})));
           PP.Lex(Tok);

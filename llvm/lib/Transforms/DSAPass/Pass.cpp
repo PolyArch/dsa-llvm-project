@@ -65,10 +65,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
 
-  dsa::analysis::DFGAnalysisResult DAR;
 
-  dsa::analysis::gatherConfigScope(F, DAR);
-  auto &ScopePairs = DAR.Scope;
+  auto ScopePairs = dsa::analysis::gatherConfigScope(F);
   if (!ScopePairs.empty()) {
     if (!dsa::utils::ModuleContext().EXTRACT) {
       DSARegs = dsa::xform::injectDSARegisterFile(F);
@@ -80,7 +78,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
   dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI);
   for (int i = 0, N = ScopePairs.size(); i < N; ++i) { // NOLINT
+    dsa::analysis::DFGAnalysisResult DAR;
     std::string Name = F.getName().str() + "_dfg_" + std::to_string(i) + ".dfg";
+    DSA_LOG(PASS) << Name;
     auto *Start = ScopePairs[i].first;
     auto *End = ScopePairs[i].second;
     DFGFile DF(Name, Start, End, this);

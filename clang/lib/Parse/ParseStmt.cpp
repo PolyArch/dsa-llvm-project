@@ -2584,9 +2584,9 @@ StmtResult Parser::ParsePragmaStreamSpecialize(clang::Parser::StmtVector &Stmts,
     } else {
       for (auto &elem : Hint.Clauses) {
         SmallVector<ArgsUnion, 0> Args;
-        auto IL = IdentifierLoc::create(Actions.Context,
-                                        elem.first.getLocation(),
-                                        elem.first.getIdentifierInfo());
+        auto *IL = IdentifierLoc::create(Actions.Context,
+                                         elem.first.getLocation(),
+                                         elem.first.getIdentifierInfo());
         Args.push_back(IL);
         if (elem.second) {
           Args.push_back(elem.second);

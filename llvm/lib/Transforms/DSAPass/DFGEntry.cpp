@@ -36,7 +36,7 @@ Predicate *DFGEntry::getPredicate(int *X) {
           Res = Entry->getPredicate();
         } else {
           if (Entry->getPredicate()) {
-            CHECK(Res == Entry->getPredicate());
+            DSA_CHECK(Res == Entry->getPredicate());
           }
         }
       }
@@ -112,10 +112,10 @@ std::string DFGEntry::name(int Idx) {
 
 std::string OutputPort::name(int VecIdx) {
   auto *Entry = this;
-  CHECK(Entry);
+  DSA_CHECK(Entry);
   auto Vs = Entry->underlyingValues();
   if (!isa<AtomicPortMem>(this)) {
-    CHECK(Vs.size() == 1) << Vs.size() << ": " << dump();
+    DSA_CHECK(Vs.size() == 1) << Vs.size() << ": " << dump();
   }
   std::ostringstream OSS;
   OSS << "sub" << Parent->ID << "_v" << Entry->ID << "_";
@@ -132,7 +132,7 @@ PortBase::PortBase(DFGBase *Parent_) // NOLINT
 
 OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) { // NOLINT
   auto *Inst = dyn_cast<Instruction>(Value_);
-  CHECK(Inst);
+  DSA_CHECK(Inst);
 
   LLVM_DEBUG(Inst->dump());
 
@@ -270,7 +270,7 @@ StreamInPort *StreamOutPort::findConsumer() {
         return SIP;
     }
   }
-  CHECK(false) << "Cannot find consumer for " << *underlyingInst();
+  DSA_CHECK(false) << "Cannot find consumer for " << *underlyingInst();
   return nullptr;
 }
 
@@ -328,7 +328,7 @@ bool OutputPort::shouldUnroll() {
   if (!DFGEntry::shouldUnroll())
     return false;
   auto *OV = Parent->InThisDFG(Output);
-  CHECK(OV);
+  DSA_CHECK(OV);
   return OV->shouldUnroll();
 }
 
@@ -407,7 +407,7 @@ std::string getOperationStr(Instruction *Inst, bool isAcc, bool predicated) { //
     OpStr = "compare";
     BitWidth = Cmp->getOperand(0)->getType()->getScalarSizeInBits();
   } else if (auto *Call = dyn_cast<CallInst>(Inst)) {
-    CHECK(Call);
+    DSA_CHECK(Call);
     OpStr = Call->getCalledFunction()->getName().str();
   } else {
     OpStr = Inst->getOpcodeName();
@@ -434,7 +434,7 @@ std::string ValueToOperandText(Value *Val) { // NOLINT
     return formatv("{0}", CI->getValue().getSExtValue());
   }
   auto *CFP = dyn_cast<ConstantFP>(Val);
-  CHECK(CFP);
+  DSA_CHECK(CFP);
   // TODO: Support more data types
   double FPV = CFP->getValueAPF().convertToDouble();
   uint64_t *RI = reinterpret_cast<uint64_t *>(&FPV);
@@ -640,7 +640,7 @@ int TBits(int Bits) { // NOLINT
   case 8:
     return 3;
   }
-  CHECK(false);
+  DSA_CHECK(false);
   return -1;
 }
 

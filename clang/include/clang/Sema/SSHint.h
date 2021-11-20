@@ -31,8 +31,7 @@ struct SSHint {
   // Dependence and unroll clauses.
   SmallVector<std::pair<Token, Expr*>, 0> Clauses;
 
-  SSHint() : Range(), PragmaNameLoc(nullptr), Clauses() {
-  }
+  SSHint() : Range(), PragmaNameLoc(nullptr), Clauses() {}
 };
 
 } // end namespace clang

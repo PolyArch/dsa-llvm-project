@@ -103,7 +103,7 @@ struct SWCast :SEWrapper {
 
   SWCast(void *Parent, const SCEV *Raw) : SEWrapper(Parent, Raw) {
     SCE = dyn_cast<SCEVCastExpr>(Raw);
-    CHECK(SCE);
+    DSA_CHECK(SCE);
     TyEnum = kSWCast;
   }
 

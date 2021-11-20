@@ -6,25 +6,28 @@
 #include "./StreamAnalysis.h"
 
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/IR/Instruction.h"
+#include <string>
 
 #define DEBUG_TYPE "dfg-analysis"
 
 namespace dsa {
 namespace analysis {
 
-void gatherConfigScope(Function &F, DFGAnalysisResult &DAR) {
-  auto &Res = DAR.Scope;
+std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> gatherConfigScope(Function &F) {
+  std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Res;
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (auto *End = dyn_cast<IntrinsicInst>(&I)) {
         if (End->getIntrinsicID() == Intrinsic::ss_config_end) {
           auto *Start = dyn_cast<IntrinsicInst>(End->getOperand(0));
-          CHECK(Start && Start->getIntrinsicID() == Intrinsic::ss_config_start);
+          DSA_CHECK(Start && Start->getIntrinsicID() == Intrinsic::ss_config_start);
           Res.emplace_back(Start, End);
         }
       }
     }
   }
+  return Res;
 }
 
 std::pair<std::set<Instruction *>, std::set<Instruction *>>
@@ -132,7 +135,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         LoadInst *IdxLoad = nullptr;
         for (auto *Elem : BFSBack.first) {
           if (auto *ThisLoad = dyn_cast<LoadInst>(Elem)) {
-            CHECK(!IdxLoad) << "For now only one level indirect supported!";
+            DSA_CHECK(!IdxLoad) << "For now only one level indirect supported!";
             IdxLoad = ThisLoad;
           }
         }
@@ -162,7 +165,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
           // bool SimpleLoop = false;
           // auto *BI = dyn_cast<BranchInst>(&DD->InnerMost()->getLoopLatch()->back());
           // auto *Latch = DD->InnerMost()->getLoopLatch();
-          // CHECK(BI);
+          // DSA_CHECK(BI);
           // for (auto *BB : BI->successors()) {
           //   if (BB == Latch) {
           //     SimpleLoop = true;
@@ -377,7 +380,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
         // FIXME: I am not sure if this will suffice. I relax the constraint
         // of detecting a accumulation by checking the BFS successors.
-        CHECK(IsAcc) << "Phi should be an accumulator! " << *Phi;
+        DSA_CHECK(IsAcc) << "Phi should be an accumulator! " << *Phi;
 
       } else if (auto *Load = dyn_cast<LoadInst>(Operand)) {
         DB.Entries.push_back(differentiateMemoryStream(Load));
@@ -423,14 +426,14 @@ struct DFGEntryAnalyzer : DFGVisitor {
         DSA_LOG(DFG) << "Plain Inst: " << *Inst;
       }
     } else {
-      assert(Inst->getOpcode() == BinaryOperator::Add ||
-             Inst->getOpcode() == BinaryOperator::FAdd);
+      // assert(Inst->getOpcode() == BinaryOperator::Add ||
+      //        Inst->getOpcode() == BinaryOperator::FAdd);
       auto *Acc = new Accumulator(&DB, Inst);
       DB.Entries.push_back(Acc);
       Entry = Acc;
       DSA_LOG(DFG) << "Accumulator: " << *Inst;
     }
-    CHECK(Entry);
+    DSA_CHECK(Entry);
   }
 
   /*!
@@ -473,7 +476,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
               if (!IsUpdate) {
                 AtomicOperand = nullptr;
               } else {
-                CHECK(AtomicOperand);
+                DSA_CHECK(AtomicOperand);
                 DSA_LOG(DFG) << "Operation: " << *AtomicOperand;
               }
               Entries.push_back(new AtomicPortMem(
@@ -548,19 +551,19 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
 
     if (DD.Entries.empty()) {
-      CHECK(Visited.size() == 1 && isa<LoadInst>(Visited[0]));
+      DSA_CHECK(Visited.size() == 1 && isa<LoadInst>(Visited[0]));
       DD.Entries.push_back(differentiateMemoryStream(dyn_cast<LoadInst>(Visited[0])));
       inspectConsumers(Visited[0]);
     }
 
-    CHECK(!DD.Entries.empty());
+    DSA_CHECK(!DD.Entries.empty());
   }
 
   void Visit(TemporalDFG *TD) override {
     DBPtr = TD;
     std::queue<Instruction *> Q;
     std::vector<Instruction *> Visited;
-    CHECK(TD->getBlocks().size() == 1);
+    DSA_CHECK(TD->getBlocks().size() == 1);
 
     for (auto *I = TD->Begin->getNextNode(); I != TD->End;
          I = I->getNextNode()) {
@@ -706,7 +709,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
       if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(),
                                          "llvm.loop.ss.dedicated")) {
         auto *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
-        CHECK(MDFactor);
+        DSA_CHECK(MDFactor);
         int Factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
         auto *DD = new DedicatedDFG(&DF, SubLoop, Factor);
         DF.addDFG(DD);
@@ -731,14 +734,14 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
           if (TemporalEnd->getIntrinsicID() !=
               Intrinsic::ss_temporal_region_end)
             continue;
-          CHECK(TemporalEnd->getOperand(0) == TemporalStart);
+          DSA_CHECK(TemporalEnd->getOperand(0) == TemporalStart);
           auto *TD = new TemporalDFG(&DF, TemporalStart, TemporalEnd);
           DF.addDFG(TD);
           Found = true;
           break;
         }
       }
-      CHECK(Found);
+      DSA_CHECK(Found);
     }
     if (BB == End->getParent()) {
       break;
@@ -754,13 +757,23 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
 
 ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   auto *SBCONFIG = getenv("SBCONFIG");
-  CHECK(SBCONFIG);
-  std::string DummyFlag = dsa::utils::ModuleContext().DUMMY ? "--dummy" : "-v";
-  auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", DummyFlag, SBCONFIG, FName).str();
+  DSA_CHECK(SBCONFIG);
+  std::string ExtraFlag = "";
+  if (dsa::utils::ModuleContext().DUMMY) {
+    ExtraFlag += " --dummy";
+  }
+  bool BitStream = dsa::utils::ModuleContext().BITSTREAM;
+  if (BitStream) {
+    ExtraFlag += " -b";
+  }
+  if (dsa::utils::ModuleContext().COMPAT_ADG) {
+    ExtraFlag += " -a";
+  }
+  auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", ExtraFlag, SBCONFIG, FName).str();
   DSA_LOG(CONFIG) << Cmd;
-  CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
+  DSA_CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
 
-  std::ifstream Ifs(FName + ".h");
+  std::ifstream Ifs(FName + (BitStream ? ".bits" : "") + ".h");
   auto DFGs = DF.DFGFilter<DFGBase>();
 
   std::string Stripped(FName);
@@ -791,17 +804,17 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
       if (Token.find(IOPortPrefix) == 0) {
         int X, Y;
         auto Stripped = Token.substr(IOPortPrefix.size());
-        CHECK(sscanf(Stripped.c_str(), "%d_v%d", &X, &Y) == 2);
+        DSA_CHECK(sscanf(Stripped.c_str(), "%d_v%d", &X, &Y) == 2);
         int Port;
         Iss >> Port;
         DSA_LOG(CONFIG) << "sub" << X << "v" << Y << " -> " << Port << "\n";
-        CHECK(X >= 0 && X < (int) DFGs.size()) << Token << ": " << X << ", " << DFGs.size();
-        CHECK(Y >= 0 && Y < (int) DFGs[X]->Entries.size());
+        DSA_CHECK(X >= 0 && X < (int) DFGs.size()) << Token << ": " << X << ", " << DFGs.size();
+        DSA_CHECK(Y >= 0 && Y < (int) DFGs[X]->Entries.size());
         auto *Entry = DFGs[X]->Entries[Y];
         if (auto *PB = dyn_cast<PortBase>(Entry)) {
           PB->SoftPortNum = Port;
         } else if (auto *CB = dyn_cast<ComputeBody>(Entry)) {
-          CHECK(false) << "This should be deprecated!";
+          DSA_CHECK(false) << Token << ": " << X << " " << Y << " This should be deprecated!";
           if (!CB->isImmediateAtomic()) {
             DSA_LOG(CONFIG) << "OutputPorts:\n";
             auto OutPorts = CB->getOutPorts();
@@ -811,7 +824,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
             }
             // FIXME: For now only one destination is supported
             // Later divergence will be supported
-            CHECK(OutPorts.size() == 1)
+            DSA_CHECK(OutPorts.size() == 1)
                 << *CB->underlyingInst() << " " << OutPorts.size();
             OutPorts[0]->SoftPortNum = Port;
 
@@ -832,16 +845,16 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
             CB->SoftPortNum = Port;
           }
         } else {
-          CHECK(false) << "DSAPass port information gathering unreachable!";
+          DSA_CHECK(false) << "DSAPass port information gathering unreachable!";
         }
         // #define dfgx_size size
       } else if (Token.find(IClusterPrefix) == 0 || Token.find(OClusterPrefix) == 0) {
         Token = Token.substr(IClusterPrefix.size());
         int X, Y, Port;
-        CHECK(sscanf(Token.c_str(), "_%d_%d_", &X, &Y) == 2);
+        DSA_CHECK(sscanf(Token.c_str(), "_%d_%d_", &X, &Y) == 2);
         Iss >> Port;
         auto *SLP = dyn_cast<PortBase>(DFGs[X]->Entries[Y]);
-        CHECK(SLP);
+        DSA_CHECK(SLP);
         SLP->SoftPortNum = Port;
       } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {
         Iss >> ConfigSize;
@@ -850,26 +863,26 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         int X, Y;
         if (sscanf(Token.c_str(), "in_%d_%d", &X, &Y) == 2) {
           auto *IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
-          CHECK(IMP);
+          DSA_CHECK(IMP);
           Iss >> IMP->Index->SoftPortNum;
         } else {
-          CHECK(sscanf(Token.c_str(), "out_%d_%d", &X, &Y) == 2);
+          DSA_CHECK(sscanf(Token.c_str(), "out_%d_%d", &X, &Y) == 2);
           auto *IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
-          CHECK(IMP);
+          DSA_CHECK(IMP);
           Iss >> IMP->IndexOutPort;
         }
       } else if (Token.find(PortPrefix + "Operand_") == 0) {
         Token = Token.substr(std::string(PortPrefix + "Operand_").size());
         int X, Y;
-        CHECK(sscanf(Token.c_str(), "sub%d_v%d_", &X, &Y) == 2);
+        DSA_CHECK(sscanf(Token.c_str(), "sub%d_v%d_", &X, &Y) == 2);
         auto *APM = dyn_cast<AtomicPortMem>(DFGs[X]->Entries[Y]);
-        CHECK(APM);
+        DSA_CHECK(APM);
         Iss >> APM->OperandPort;
       } else if (Token.find(IBuffetPrefix) == 0 || Token.find(OBuffetPrefix) == 0) {
         bool IsInput = Token.find(IBuffetPrefix) == 0;
         Token = Token.substr(IBuffetPrefix.size());
         int X;
-        CHECK(sscanf(Token.c_str(), "_%d_", &X));
+        DSA_CHECK(sscanf(Token.c_str(), "_%d_", &X));
         if (IsInput) {
           Iss >> std::get<3>(SI.Buffet[X]);
           DSA_INFO << "Buffet Read Port: " << std::get<3>(SI.Buffet[X]);
@@ -878,20 +891,52 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
           DSA_INFO << "Buffet Write Port: " << std::get<4>(SI.Buffet[X]);
         }
       } else if (Token.find(L2DPrefix)) {
-        CHECK(false) << "Support this: " << Token;
+        DSA_CHECK(false) << "Support this: " << Token;
       } else {
-        CHECK(false) << "Unrecognized token: " << Token;
+        DSA_CHECK(false) << "Unrecognized token: " << Token;
       }
       // char dfgx_config[size] = "filename:dfgx.sched";
-    } else if (Token == "char") {
-      // dfgx_config[size]
-      Iss >> Token;
-      // =
-      Iss >> Token;
-      // "filename:dfgx.sched";
-      Iss >> Token;
-      ConfigString = Token.substr(1, Token.size() - 3);
-      ConfigString += std::string(ConfigSize - ConfigString.size() - 1, '\0');
+    } else if (Token == "char" || Token == "uint64_t") {
+      if (!BitStream) {
+        // dfgx_config[size]
+        Iss >> Token;
+        // =
+        Iss >> Token;
+        // "filename:dfgx.sched";
+        Iss >> Token;
+        ConfigString = Token.substr(1, Token.size() - 3);
+        if ((int) ConfigString.size() > ConfigSize) {
+          ConfigString += std::string(ConfigSize - ConfigString.size() - 1, '\0');
+        } else {
+          ConfigSize = ConfigString.size() + 1;
+        }
+      } else {
+        std::string Raw;
+        DSA_INFO << ConfigSize;
+        for (int i = 0; i < ConfigSize; ++i) { // NOLINT
+          DSA_CHECK(std::getline(Ifs, Raw));
+          while (isspace(Raw[0])) {
+            Raw.erase(Raw.begin());
+          }
+          while (Raw.back() != ',') {
+            Raw.pop_back();
+          }
+          Raw.pop_back();
+          uint64_t Word = 0;
+          if (Raw[0] == '0' && Raw[1] == 'b') {
+            for (int j = 2; j < (int) Raw.size(); ++j) {  // NOLINT
+              Word = (Word << 1) | (Raw[j] - '0');
+            }
+          } else {
+            std::istringstream Iss(Raw);
+            DSA_CHECK(Iss >> Word);
+          }
+          std::string WordByte((char*)&Word, (char*)&Word + 8);
+          ConfigString.insert(ConfigString.end(), WordByte.begin(), WordByte.end());
+        }
+        DSA_INFO << ConfigString.size();
+        DSA_CHECK(std::getline(Ifs, Raw));
+      }
     }
   }
 
@@ -912,7 +957,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
         } else {
           NSCEV = SE.getAddExpr(NSCEV, SE.getConstant(APInt(64, 1, true)));
           if (const auto *MME = dyn_cast<SCEVMinMaxExpr>(NSCEV)) {
-            CHECK(isa<SCEVUMaxExpr>(MME) || isa<SCEVSMaxExpr>(MME));
+            DSA_CHECK(isa<SCEVUMaxExpr>(MME) || isa<SCEVSMaxExpr>(MME));
             if (const auto *SC = dyn_cast<SCEVConstant>(MME->getOperand(0))) {
               if (SC->getAPInt().getSExtValue() == 1) {
                 NSCEV = MME->getOperand(1);
@@ -963,7 +1008,7 @@ int64_t indexPairOffset(SEWrapper *ASW, SEWrapper *BSW, ScalarEvolution &SE, boo
   if (auto *A = dyn_cast<LinearCombine>(ASW)) {
     if (auto *B = dyn_cast<LinearCombine>(BSW)) {
       if (A->Coef.size() != B->Coef.size()) {
-        CHECK(!Signed);
+        DSA_CHECK(!Signed);
         return -1;
       }
       for (int j = 0; j < (int) A->Coef.size(); ++j) { // NOLINT
@@ -991,14 +1036,13 @@ int64_t indexPairOffset(SEWrapper *ASW, SEWrapper *BSW, ScalarEvolution &SE, boo
       return Signed ? Res : std::abs(Res);
     }
   }
-  CHECK(!Signed) << "If signed, same access pattern should be garanteed!";
+  DSA_CHECK(!Signed) << "If signed, same access pattern should be garanteed!";
   return -1;
 }
 
 void DFGAnalysisResult::initAffineCache(DFGFile &DF, ScalarEvolution &SE) {
   for (auto *DFG : DF.DFGs) {
     for (auto *Elem : DFG->Entries) {
-      DSA_INFO << Elem->dump();
       affineMemoryAccess(Elem, SE, true);
     }
   }
@@ -1012,7 +1056,7 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
     }
     void Visit(PortMem *PM) override {
       analyze(PM->Store->getPointerOperand(), PM);
-      CHECK(SW);
+      DSA_CHECK(SW);
       if (auto *LC = dyn_cast<LinearCombine>(SW)) {
         auto PI = LC->partialInvariant();
         LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + PI);
@@ -1026,7 +1070,7 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
       analyze(APM->Store->getPointerOperand(), APM);
     }
     void analyze(Value *Ptr, DFGEntry *DE) {
-      CHECK(DE->Parent->ID >= 0 && DE->Parent->ID < (int) DAR.DLI.size())
+      DSA_CHECK(DE->Parent->ID >= 0 && DE->Parent->ID < (int) DAR.DLI.size())
         << DAR.DLI.size() << " " << DE->Parent->ID;
       auto &DLI = DAR.DLI[DE->Parent->ID];
       auto *SCEV = SE.getSCEV(Ptr);
@@ -1049,7 +1093,7 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
   AffineExtractor AE(*this, SE);
   DE->accept(&AE);
   if (!AllowNull) {
-    CHECK(AE.SW) << DE->dump();
+    DSA_CHECK(AE.SW) << DE->dump();
   }
   if (AE.SW) {
     AI[DE] = AE.SW;
@@ -1114,7 +1158,7 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       int DSet = utils::DSUGetSet(j, DSU);
       if (DSet != j && DSize[DSet] != 1) {
         auto *SLP = dyn_cast<TSLP>(Entries[DSet]);
-        CHECK(SLP);
+        DSA_CHECK(SLP);
         DSA_LOG(SLP) << DSet << "(" << DSize[DSet] << "): " << Entry->dump();
         SLP->Coal.push_back(Entry);
         Remove.push_back(j);
@@ -1141,7 +1185,7 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       } else if (auto LI = dyn_cast<LoopInvariant>(Raw)) {
         L = LI->toLinearCombine(&SE);
       }
-      CHECK(L);
+      DSA_CHECK(L);
       L = new LinearCombine(*L);
       auto Ptr = Entry->Coal[0]->underlyingInst()->getOperand(TEntry::PtrOperandIdx);
       int DBits = Ptr->getType()->getPointerElementType()->getScalarSizeInBits();
@@ -1167,7 +1211,7 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
 
 void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult &DAR) {
   auto DFGs = DF.DFGFilter<DFGBase>();
-  CHECK(DAR.DLI.size() == DFGs.size());
+  DSA_CHECK(DAR.DLI.size() == DFGs.size());
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto &Entries = DFGs[i]->Entries;
     std::vector<int> DSU;
@@ -1237,6 +1281,38 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     std::unordered_map<DFGEntry*, int> Cnt;
     if (auto *DD = dyn_cast<DedicatedDFG>(Graphs[i])) {
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
+        {
+          std::set<Instruction*> Insts;
+          FindEquivPHIs(Acc->Operation, Insts);
+          for (auto *Elem : Insts) { // NOLINT
+            if (auto *Phi = dyn_cast<PHINode>(Elem)) {
+              for (int j = 0; j < (int) Phi->getNumOperands(); ++j) { // NOLINT
+                auto *Val = dyn_cast<Value>(Phi->getOperand(j));
+                if (isa<ConstantData>(Val)) {
+                  // DSA_CHECK(Acc->ResetLevel == -1) << Acc->ResetLevel;
+                  auto *BB = Phi->getIncomingBlock(j);
+                  DSA_LOG(ACC)
+                    << Acc->dump() << " reset by block " << BB->getName() << ", " << *Val;
+                  for (int k = 0; k < (int) Loops.size(); ++k) { // NOLINT
+                    if (Loops[k]->contains(BB)) {
+                      DSA_CHECK(k);
+                      if (Acc->ResetLevel == -1) {
+                        Acc->ResetLevel = k - 1;
+                      } else {
+                        DSA_CHECK(Acc->ResetLevel == k - 1) << *Loops[k];
+                      }
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          if (Acc->ResetLevel == -1) {
+            Acc->ResetLevel = Loops.size() - 1;
+            DSA_LOG(ACC) << Loops.size() << " reset when exiting!";
+          }
+        }
         auto V = analysis::bfsOperands(DD, Acc->Operation, nullptr).first;
         InputPort *Tag = nullptr;
         auto F = [&Tag, &Acc] (InputPort *IP) {
@@ -1244,7 +1320,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             IP->Tagged.push_back(Acc);
             Tag = IP;
           } else if (IP->Tagged.size() >= Tag->Tagged.size()) {
-            CHECK(Acc == Tag->Tagged.back());
+            DSA_CHECK(Acc == Tag->Tagged.back());
             Tag->Tagged.pop_back();
             IP->Tagged.push_back(Acc);
           }
@@ -1261,9 +1337,9 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                 auto *DS = extractStreamIntrinsics(IMP, CGC, DAR);
                 if (auto *Ind1D = dyn_cast<xform::Indirect1D>(DS)) {
                   auto *IP = dyn_cast<IndirectPointer>(Ind1D->Idx);
-                  CHECK(IP) << IP->toString();
+                  DSA_CHECK(IP) << IP->toString();
                   auto *LC = dyn_cast<LinearCombine>(IP->Pointer);
-                  CHECK(LC) << Ind1D->Idx->toString();
+                  DSA_CHECK(LC) << Ind1D->Idx->toString();
                   if (LC->partialInvariant() == 0) {
                     F(IMP);
                   }
@@ -1279,56 +1355,63 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
           }
         }
         if (Tag) {
-          // for (auto *OP : Acc->Parent->EntryFilter<OutputPort>()) {
-          //   auto Visited = bfsOperands(Acc->Parent, OP->underlyingInsts()[0], nullptr).first;
-          //   auto Iter = Visited.find(Acc->underlyingInst());
-          //   auto *Inst = OP->underlyingInsts()[0];
-          //   if (Iter != Visited.end()) {
-          //     DSA_INFO << OP->dump();
-          //     DSA_INFO << *Inst;
-          //     for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
-          //       DSA_INFO << j;
-          //       if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
-          //         DSA_LOG(ACC) << "Finalized by: " << OP->dump();
-          //         DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
-          //         Acc->ResetLevel = j;
-          //         break;
-          //       }
-          //     }
-          //   }
-          //   if (Acc->ResetLevel != -1) {
-          //     break;
-          //   }
-          // }
-          for (auto *User : Acc->Operation->users()) {
-            if (auto *Inst = dyn_cast<Instruction>(User)) {
-              // Explain this!
-              // if (!Graphs[i]->InThisDFG(Inst)) {
-              //   if (!Graphs[i]->BelongOtherDFG(Inst)) {
-              //     DSA_LOG(ACC) << "Skip: " << *Inst;
-              //     continue;
-              //   }
-              // }
-              bool Skip = false;
-              for (int j = 0; j < (int) Acc->Operation->getNumOperands(); ++j) { // NOLINT
-                if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
-                  if (OpInst == Inst) {
-                    Skip = true;
-                    break;
+          for (auto *OP : Acc->Parent->EntryFilter<OutputPort>()) {
+            auto Upstream = bfsOperands(OP->Parent, OP->Output, CGC.DT).first;
+            for (auto *Elem : Upstream) {
+              if (auto *DE = OP->Parent->InThisDFG(Elem)) {
+                if (DE == Acc) {
+                  auto *Consumer = OP->underlyingInsts()[0];
+                  // ...
+                  if (Consumer == Acc->Operation) {
+                    continue;
                   }
-                }
-              }
-              if (!Skip) {
-                for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
-                  if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
-                    DSA_LOG(ACC) << "User: " << *Inst;
-                    DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
-                    Acc->ResetLevel = std::max(j, Acc->ResetLevel);
-                    break;
+                  for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
+                    if (Loops[j]->contains(Consumer)) {
+                      DSA_LOG(ACC) << Acc->dump() << " Produce@" << (j - 1);
+                      if (Acc->ProduceLevel == INT_MAX) {
+                        Acc->ProduceLevel = j - 1;
+                      } else {
+                        DSA_CHECK(Acc->ProduceLevel == j - 1)
+                          << Acc->ProduceLevel << " != " << (j - 1);
+                      }
+                      break;
+                    }
                   }
                 }
               }
             }
+          }
+          // for (auto *User : Acc->Operation->users()) {
+          //   if (auto *Inst = dyn_cast<Instruction>(User)) {
+          //     bool Skip = isa<PHINode>(Inst);
+          //     for (int j = 0; j < (int) Acc->Operation->getNumOperands() && !Skip; ++j) { // NOLINT
+          //       if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
+          //         if (OpInst == Inst) {
+          //           Skip = true;
+          //         }
+          //       }
+          //     }
+          //     if (!Skip) { DSA_LOG(ACC) << "Used by: " << *Inst;
+          //       for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
+          //         if (Loops[j]->contains(Inst)) {
+          //           DSA_LOG(ACC) << Acc->dump() << " Produce@" << j - 1;
+          //           if (Acc->ProduceLevel == INT_MAX) {
+          //             Acc->ProduceLevel = j - 1;
+          //           } else {
+          //             DSA_CHECK(Acc->ProduceLevel == j - 1) <<
+          //               Acc->ProduceLevel << " != " << (j - 1);
+          //           }
+          //           break;
+          //         }
+          //       }
+          //     } else {
+          //       DSA_LOG(ACC) << "Skip: " << *Inst;
+          //     }
+          //   }
+          // }
+          if (Acc->ProduceLevel == INT_MAX) {
+            Acc->ProduceLevel = Loops.size() - 1;
+            DSA_LOG(ACC) << Loops.size() << " produce when exiting!";
           }
         }
       }
@@ -1336,17 +1419,18 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     for (auto *IP : Graphs[i]->EntryFilter<InputPort>()) {
       if (!IP->Tagged.empty()) {
         DSA_LOG(ACC) << IP->dump(); 
-        auto *SW = DAR.affineMemoryAccess(IP, CGC.SE, false);
-        DSA_LOG(ACC) << SW << " " << SW->toString();
         // TODO(@were): Enable this redundancy later.
         // auto *LC = dyn_cast<LinearCombine>(Iter->second);
-        // CHECK(LC);
+        // DSA_CHECK(LC);
         for (auto *Acc : IP->Tagged) {
           if (isa<SLPMemPort>(IP)) {
             ++Acc->ResetLevel;
+            ++Acc->ProduceLevel;
           }
-          // CHECK(Acc->ResetLevel < (int) LC->Coef.size());
-          DSA_LOG(ACC) << Acc->dump() << ", Reset@" << Acc->ResetLevel;
+          // DSA_CHECK(Acc->ResetLevel < (int) LC->Coef.size());
+          DSA_LOG(ACC)
+            << Acc->dump() << ", Reset@" << Acc->ResetLevel
+            << ", Produce@" << Acc->ProduceLevel;
         }
         DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP);
       }
@@ -1354,12 +1438,20 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
   }
 }
 
+int cutoffLevel(InputPort *IP) {
+  if (IP->Tagged.empty()) {
+    return -1;
+  }
+  auto FRed = [](int X, Accumulator *A) { return std::min(X, std::min(A->ResetLevel, A->ProduceLevel)); };
+  return std::accumulate(IP->Tagged.begin(), IP->Tagged.end(), INT_MAX, FRed);
+}
+
 void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
   struct FuseInfoExtractor : DFGEntryVisitor {
     void Visit(MemPort *MP) override {
       DBits = MP->Load->getType()->getScalarSizeInBits();
       Padding = MP->fillMode();
-      CutOff = resetLevel(MP);
+      CutOff = cutoffLevel(MP);
     }
     void Visit(PortMem *PM) override {
       DBits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
@@ -1367,7 +1459,7 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
     void Visit(SLPMemPort *SMP) override {
       auto *MP = SMP->Coal[0];
       DBits = MP->Load->getType()->getScalarSizeInBits();
-      CutOff = resetLevel(SMP);
+      CutOff = cutoffLevel(SMP);
     }
     void Visit(SLPPortMem *SPM) override {
       auto *PM = SPM->Coal[0];
@@ -1384,7 +1476,7 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
       if (FIE.CutOff == -1) {
         FIE.CutOff = Pattern->TripCount.size() - 1;
       }
-      CHECK(FIE.DBits != -1);
+      DSA_CHECK(FIE.DBits != -1);
       DSA_LOG(FUSE) << Pattern << " " << Elem.first->dump();
       DSA_LOG(FUSE) << "Before: " << Pattern->toString() << ", CutOff: " << FIE.CutOff;
       int Before = Pattern->Coef.size();
@@ -1397,6 +1489,7 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
         DSA_LOG(FUSE) << IP->dump();
         for (auto *Acc : IP->Tagged) {
           Acc->ResetLevel -= Delta;
+          Acc->ProduceLevel -= Delta;
           DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
         }
       }
@@ -1437,20 +1530,20 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
       int IType = 8;
       analysis::SEWrapper *Idx = nullptr;
       if (auto *SA = dyn_cast<analysis::SWBinary>(IdxLI)) {
-        CHECK(SA && SA->Op == 0) << IdxLI->toString();
+        DSA_CHECK(SA && SA->Op == 0) << IdxLI->toString();
         Idx = SA->A;
-        CHECK(isa<LoopInvariant>(SA->B));
+        DSA_CHECK(isa<LoopInvariant>(SA->B));
         const SCEV *SAR = SA->B->Raw;
         // Strip the Coef
         if (DType == 1) {
-          CHECK(false) << Idx->toString();
+          DSA_CHECK(false) << Idx->toString();
         } else {
           auto *SM = dyn_cast<analysis::SWBinary>(Idx);
-          CHECK(SM);
+          DSA_CHECK(SM);
           if (const auto *SC = dyn_cast<SCEVConstant>(SM->A->Raw)) {
-            CHECK(SC->getAPInt().getSExtValue() == DType);
+            DSA_CHECK(SC->getAPInt().getSExtValue() == DType);
           } else {
-            CHECK(false);
+            DSA_CHECK(false);
           }
           Idx = SM->B;
         }
@@ -1459,19 +1552,19 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
           Idx = SCE->Stripped;
         }
         auto *IP = dyn_cast<IndirectPointer>(Idx);
-        CHECK(IP) << Idx->toString();
+        DSA_CHECK(IP) << Idx->toString() << "\n" << SA->toString();
         auto *LC = dyn_cast<LinearCombine>(IP->Pointer);
-        CHECK(LC) << IdxLI->toString() << "\n" << Idx->toString();
+        DSA_CHECK(LC) << IdxLI->toString() << "\n" << Idx->toString();
         auto *L1D = productTripCount(LC->TripCount, &CGC.SE);
         DS = new xform::Indirect1D(DType, IType, SAR, L1D, Idx);
       } else if (auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI)) {
         auto *Add = dyn_cast<analysis::SWBinary>(LC->Base);
-        CHECK(Add) << LC->Base->toString();
+        DSA_CHECK(Add) << LC->Base->toString();
         auto *SAR = dyn_cast<analysis::LoopInvariant>(Add->B);
         auto *Mul = dyn_cast<analysis::SWBinary>(Add->A);
-        CHECK(Mul) << Add->A->toString();
+        DSA_CHECK(Mul) << Add->A->toString();
         auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Mul->B);
-        CHECK(IndPtr) << Mul->B->toString();
+        DSA_CHECK(IndPtr) << Mul->B->toString();
         DS = new xform::Indirect2D(DType, IType, SAR, IndPtr->Pointer, LC->TripCount[0],
                                    SAR->TripCount[0]->Raw);
       }
@@ -1490,7 +1583,7 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
   }
   StreamExtractor SE(CGC, DAR);
   DE->accept(&SE);
-  // CHECK(SE.DS);
+  // DSA_CHECK(SE.DS);
   DAR.Streams[DE] = SE.DS;
   return SE.DS;
 }

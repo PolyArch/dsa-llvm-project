@@ -268,7 +268,7 @@ DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll) // NOLINT
     LoopNest.push_back(Cur->getParentLoop());
   }
 
-  CHECK(GetUnrollMetadata(LoopNest.back()->getLoopID(), "llvm.loop.ss.stream"))
+  DSA_CHECK(GetUnrollMetadata(LoopNest.back()->getLoopID(), "llvm.loop.ss.stream"))
     << "A stream level required!\n" << *LoopNest.back() << "\n" << *LoopNest.back()->getLoopID();
 
   Loop *InnerLoop = nullptr;
@@ -362,7 +362,7 @@ void DedicatedDFG::dump(std::ostringstream &OS) {
   if (!OS.str().empty())
     OS << "\n----\n\n";
   if (dsa::utils::ModuleContext().TRIGGER) {
-    CHECK(dsa::utils::ModuleContext().TEMPORAL)
+    DSA_CHECK(dsa::utils::ModuleContext().TEMPORAL)
         << "Trigger cannot be enabled without temporal";
     OS << "#pragma group temporal\n";
   }
@@ -723,10 +723,10 @@ void TemporalDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
 
 std::string DFGBase::nameOf(Value *Val, int VecIdx) {
   auto *Entry = InThisDFG(Val);
-  CHECK(Entry) << "CANNOT find entry for " << Val << ": " << *Val;
+  DSA_CHECK(Entry) << "CANNOT find entry for " << Val << ": " << *Val;
   auto Vs = Entry->underlyingValues();
   auto Iter = std::find(Vs.begin(), Vs.end(), Val);
-  CHECK(Iter != Vs.end());
+  DSA_CHECK(Iter != Vs.end());
   int ValueIdx = Iter - Vs.begin();
   std::ostringstream OSS;
   OSS << "sub" << ID << "_v" << Entry->ID << "_" << ValueIdx << "_";
@@ -739,7 +739,7 @@ std::string DFGBase::nameOf(Value *Val, int VecIdx) {
 DedicatedDFG::DedicatedDFG(DFGFile *P, dsa::analysis::SEWrapper *SW) : DFGBase(P) {
   DSA_INFO << SW->toString();
   auto *IP = dyn_cast<dsa::analysis::IndirectPointer>(SW);
-  CHECK(IP) << SW->toString();
+  DSA_CHECK(IP) << SW->toString();
   auto *SU = dyn_cast<SCEVUnknown>(SW->Raw);
   auto *Load = dyn_cast<LoadInst>(SU->getValue());
   Entries.push_back(new MemPort(this, Load));

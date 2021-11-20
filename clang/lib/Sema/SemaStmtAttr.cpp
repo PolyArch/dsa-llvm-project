@@ -432,7 +432,7 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
     return SSDataStreamAttr::CreateImplicit(S.Context, Type == "barrier");
   }
   case ParsedAttr::AT_SSDfg: {
-    auto II = A.getArgAsIdent(0)->Ident;
+    auto *II = A.getArgAsIdent(0)->Ident;
     SSDfgAttr::HintType Type =
         llvm::StringSwitch<SSDfgAttr::HintType>(II->getName())
           .Case("dedicated", SSDfgAttr::Dedicated)
@@ -451,7 +451,7 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
     return SSConfigAttr::CreateImplicit(S.Context);
   }
   case ParsedAttr::AT_SSStreamName: {
-    auto SN = A.getArgAsIdent(0)->Ident;
+    auto *SN = A.getArgAsIdent(0)->Ident;
     return SSStreamNameAttr::CreateImplicit(S.Context, SN->getName());
   }
   default:

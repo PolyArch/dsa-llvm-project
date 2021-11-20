@@ -246,10 +246,6 @@ struct DFGLoopInfo {
 /*! \brief The result of DFG analysis. */
 struct DFGAnalysisResult {
   /*!
-   * \brief The scope of config start/end. Filled by `gatherConfigScope`.
-   */
-  std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Scope;
-  /*!
    * \brief The information of DFG configuration. Filled by `extractDFGPorts`.
    */
   ConfigInfo CI;
@@ -295,9 +291,9 @@ struct DFGAnalysisResult {
 /*!
  * \brief Gather all the pairs of dsa.config.start/end
  * \param F The function to be analyzed.
- * \param DAR The result of scopes should go. Specifically, the `Scope` attr.
  */
-void gatherConfigScope(Function &F, DFGAnalysisResult &DAR);
+std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
+gatherConfigScope(Function &F);
 
 /*!
  * \brief Gather the loop information of the loop nest that wraps the DFG.

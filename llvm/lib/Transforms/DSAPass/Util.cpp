@@ -59,7 +59,8 @@ bool CanBeAEntry(Value *Val) {
     return false;
   }
   if (auto *Call = dyn_cast<CallInst>(Inst)) {
-    return Call->getCalledFunction()->getName() == "sqrt";
+    auto Name = Call->getCalledFunction()->getName();
+    return Name == "sqrt" || Name == "max64" || Name == "fsqrt";
   }
   if (isa<CmpInst>(Inst)) {
     for (auto *User : Inst->users()) {
@@ -115,8 +116,10 @@ void FindEquivPHIs(Instruction *Inst, std::set<Instruction *> &Equiv) {
     Q.pop();
   }
 
-  LLVM_DEBUG(errs() << "equiv of "; Inst->dump(); for (auto I
-                                                       : Equiv) { I->dump(); });
+  DSA_LOG(EQUIV) << *Inst;
+  for (auto *I: Equiv) {
+    DSA_LOG(EQUIV) << *I;
+  }
 }
 
 int PredicateToInt(ICmpInst::Predicate Pred, bool TF, bool Reverse) {

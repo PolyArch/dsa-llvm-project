@@ -79,11 +79,11 @@ bool RemoveBoundChecker::runOnModule(Module &M) {
   }
   for (auto &Elem : ToRemove) {
     auto *F = M.getFunction(Elem);
-    CHECK(F) << Elem << " function not found!";
+    DSA_CHECK(F) << Elem << " function not found!";
     F->replaceAllUsesWith(UndefValue::get(F->getType()));
     F->eraseFromParent();
     auto *FC = M.getFunction(Elem + "_compute_");
-    CHECK(FC) << Elem << "_compute_ function not found!";
+    DSA_CHECK(FC) << Elem << "_compute_ function not found!";
     FC->setName(Elem);
     FC->setLinkage(GlobalValue::LinkageTypes::ExternalLinkage);
   }

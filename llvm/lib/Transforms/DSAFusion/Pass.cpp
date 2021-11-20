@@ -89,7 +89,7 @@ void EliminateEquals(Function &F) {
             // res = (res << 2) | (signal & 3);
             // return res;
             auto CI = dyn_cast<ConstantInt>(Call->getOperand(0));
-            CHECK(CI);
+            DSA_CHECK(CI);
             auto Imm = CI->getSExtValue();
             int Sign = Imm & 3;
             Imm >>= 2;
@@ -118,7 +118,7 @@ void EliminateEquals(Function &F) {
             // value = (value << 3) | (DMO_Read);
             // value = (value << 1) | ((memory) & 1);
             auto CI = dyn_cast<ConstantInt>(Call->getOperand(0));
-            CHECK(CI);
+            DSA_CHECK(CI);
             auto Imm = CI->getSExtValue();
             int Memory = Imm & 1;
             Imm >>= 1;
@@ -136,7 +136,7 @@ void EliminateEquals(Function &F) {
                          << ", Port: " << Port << "\n";
           } else if (IA->getAsmString().find("ss_recv") == 0) {
             auto CI = dyn_cast<ConstantInt>(Call->getOperand(0));
-            CHECK(CI);
+            DSA_CHECK(CI);
             auto Imm = CI->getSExtValue();
             Imm >>= 1;
             int DType = Imm & 3;
@@ -147,14 +147,14 @@ void EliminateEquals(Function &F) {
                          << "Port: " << Port << "\n";
           } else if (IA->getAsmString().find("ss_wr_rd") == 0) {
             auto CI = dyn_cast<ConstantInt>(Call->getOperand(0));
-            CHECK(CI);
+            DSA_CHECK(CI);
             auto Imm = CI->getSExtValue();
             int IPort = Imm & 127;
             int OPort = (Imm >> 7) & 127;
             llvm::errs() << "[Recurrence] " << OPort << " -> " << IPort << "\n";
           } else if (IA->getAsmString().find("ss_cfg_param") == 0) {
             auto CI = dyn_cast<ConstantInt>(Call->getOperand(2));
-            CHECK(CI);
+            DSA_CHECK(CI);
             auto Imm = CI->getSExtValue();
             int Idx[] = {(int)(Imm & 31), int((Imm >> 5) & 31)};
             int S[] =  {(int)((Imm >> 10) & 1), (int)((Imm >> 11) & 1)};
@@ -166,7 +166,7 @@ void EliminateEquals(Function &F) {
                 // uint64_t value = (direct_) | (const_ << 2) | ((indirect_) << 4);
                 // CONFIG_PARAM(DSARF::CSR, value, 0);
                 auto YCI = dyn_cast<ConstantInt>(Vy);
-                CHECK(YCI);
+                DSA_CHECK(YCI);
                 auto y = YCI->getSExtValue();
                 int Direct = 1 << (y & 3);
                 y >>= 2;
@@ -203,13 +203,13 @@ void EliminateEquals(Function &F) {
             auto Val = dyn_cast<ConstantInt>(Call->getOperand(0));
             if (Val && Val->getSExtValue()) {
               auto Suf = IA->getAsmString().substr(std::string("equal.hint.").size());
-              CHECK(sscanf(Suf.c_str() + 1, "%d", &Id) == 1);
+              DSA_CHECK(sscanf(Suf.c_str() + 1, "%d", &Id) == 1);
               --Id;
               llvm::errs() << "[Suffix] " << Suf << " " << Suf[0] << " " << Id << "\n";
               if (Suf[0] == 's') {
                 Operands[Id].ES = true;
               } else {
-                CHECK(Suf[0] == 'v');
+                DSA_CHECK(Suf[0] == 'v');
                 Operands[Id].EV = true;
               }
               llvm::errs() << "[Equal] " << Id << ": "
@@ -253,7 +253,7 @@ void FuseZeroConfigs(Function &F, DominatorTree *DT) {
           llvm::errs() << "[Call] "<< *Call << "\n";
           if (IA->getAsmString().find("ss_cfg_param") == 0) {
             auto CI = dyn_cast<ConstantInt>(Call->getOperand(2));
-            CHECK(CI);
+            DSA_CHECK(CI);
             auto Imm = CI->getSExtValue();
             int Idx[2] = {(int)(Imm & 31), (int)((Imm >> 5) & 31)};
             int S[2] = {(int)((Imm >> 10) & 1), (int)((Imm >> 11) & 1)};

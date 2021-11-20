@@ -62,6 +62,14 @@ struct ModuleFlags {
    * \brief If we want a dummy mapping for DFGs.
    */
   DEFINE_FLAG(DUMMY, 0)
+  /*!
+   * \brief If we want to dump the bitstream.
+   */
+  DEFINE_FLAG(BITSTREAM, 0)
+  /*!
+   * \brief If ADG is old version
+   */
+  DEFINE_FLAG(COMPAT_ADG, 1)
 #undef DEFINE_FLAG
 
   ModuleFlags() {
@@ -73,6 +81,8 @@ struct ModuleFlags {
     getFlagEXTRACT();
     getFlagFUSION();
     getFlagDUMMY();
+    getFlagBITSTREAM();
+    getFlagCOMPAT_ADG();
   }
 };
 

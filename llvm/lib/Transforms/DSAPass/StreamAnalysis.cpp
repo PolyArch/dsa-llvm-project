@@ -153,7 +153,7 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   if (auto *Res = analyzeBinary(SE, Raw, Parent, Loops, TripCount)) {
     return Res;
   }
-  CHECK(isa<SCEVAddRecExpr>(Raw)) << *Raw;
+  DSA_CHECK(isa<SCEVAddRecExpr>(Raw)) << *Raw;
   LinearCombine *Res = new LinearCombine(Parent, Raw);
   for (int j = 0; j < i; ++j) { // NOLINT
     Res->Coef.push_back(LoopInvariant::get(Parent, SE->getConstant(APInt(64, 0))));
@@ -166,7 +166,7 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
         continue;
       }
       if (SARE->getLoop() != Loops[i]) {
-        CHECK(SE->isLoopInvariant(Cur, Loops[i]))
+        DSA_CHECK(SE->isLoopInvariant(Cur, Loops[i]))
           << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i]
           << "\nCurrent Loop: " << *SARE->getLoop()
           << "\nOuter Most: " << *Loops.back();
@@ -194,7 +194,7 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   //   DSA_LOG(AFFINE) << i << ": " << "Coef " << Res->Coef[i]->toString()
   //     << " ,Trip " << Res->TripCount[i]->toString();
   // }
-  // CHECK(Res->Coef.size() == Loops.size()) << Res->Coef.size() << " != " << Loops.size();
+  // DSA_CHECK(Res->Coef.size() == Loops.size()) << Res->Coef.size() << " != " << Loops.size();
   std::vector<Loop*> ResidueLoops(Loops.begin() + i, Loops.end());
   std::vector<SEWrapper*> ResidueTripCount(TripCount.begin() + i, TripCount.end());
   Res->Base = analyzeIndexExpr(SE, Cur, Res, ResidueLoops, ResidueTripCount);
@@ -318,13 +318,13 @@ struct StreamAnalysisPass : public FunctionPass {
   std::vector<Loop *> Loops;
 
   void AnalyzeLoopNest(const std::vector<Loop *> &Loops) { // NOLINT
-    CHECK(!Loops.empty());
+    DSA_CHECK(!Loops.empty());
     auto *L = Loops.front();
     for (auto &BB : L->getBlocks()) {
       for (auto &I : *BB) {
         if (auto *Load = dyn_cast<LoadInst>(&I)) {
           auto *Index = Load->getPointerOperand();
-          CHECK(SE->isSCEVable(Index->getType()));
+          DSA_CHECK(SE->isSCEVable(Index->getType()));
           auto *LI = analyzeIndexExpr(SE, SE->getSCEV(Index), Load, Loops,
                                       std::vector<SEWrapper*>(Loops.size(), nullptr));
           DSA_LOG(LOOP) << LI->toString();
