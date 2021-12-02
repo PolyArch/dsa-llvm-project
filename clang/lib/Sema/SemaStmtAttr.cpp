@@ -426,10 +426,16 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
   case ParsedAttr::AT_Unlikely:
     return handleUnlikely(S, St, A, Range);
   case ParsedAttr::AT_SSDataStream: {
-    std::string Type = "barrier";
-    if (A.getNumArgs() != 0)
-      Type = A.getArgAsIdent(0)->Ident->getName().str();
-    return SSDataStreamAttr::CreateImplicit(S.Context, Type == "barrier");
+    std::string Key = "barrier";
+    std::vector<Expr*> Values;
+    if (A.getNumArgs() == 2) {
+      Key = "fifo";
+      Values.push_back(A.getArgAsExpr(0)->getExprStmt());
+      Values.push_back(A.getArgAsExpr(1)->getExprStmt());
+    } else {
+      Key = A.getArgAsIdent(0)->Ident->getName().str();
+    }
+    return SSDataStreamAttr::CreateImplicit(S.Context, Key, Values.data(), Values.size());
   }
   case ParsedAttr::AT_SSDfg: {
     auto *II = A.getArgAsIdent(0)->Ident;
@@ -468,8 +474,9 @@ StmtResult Sema::ProcessStmtAttributes(Stmt *S,
                                        SourceRange Range) {
   SmallVector<const Attr*, 8> Attrs;
   for (const ParsedAttr &AL : AttrList) {
-    if (Attr *a = ProcessStmtAttribute(*this, S, AL, Range))
+    if (Attr *a = ProcessStmtAttribute(*this, S, AL, Range)) {
       Attrs.push_back(a);
+    }
   }
 
   CheckForIncompatibleAttributes(*this, Attrs);

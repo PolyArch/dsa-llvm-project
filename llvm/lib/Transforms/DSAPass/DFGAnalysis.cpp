@@ -1,4 +1,6 @@
 #include "Util.h"
+#include "dsa/arch/model.h"
+#include "dsa/core/singleton.h"
 #include "dsa/debug.h"
 
 #include "./CodeXform.h"
@@ -135,7 +137,9 @@ struct DFGEntryAnalyzer : DFGVisitor {
         LoadInst *IdxLoad = nullptr;
         for (auto *Elem : BFSBack.first) {
           if (auto *ThisLoad = dyn_cast<LoadInst>(Elem)) {
-            DSA_CHECK(!IdxLoad) << "For now only one level indirect supported!";
+            DSA_CHECK(!IdxLoad)
+              << "For now only one level indirect supported!"
+              << *ThisLoad << "\n" << *IdxLoad << "\n" << *Load;
             IdxLoad = ThisLoad;
           }
         }
@@ -711,6 +715,9 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
         auto *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
         DSA_CHECK(MDFactor);
         int Factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
+        if (Factor == 0) {
+          Factor = 1;
+        }
         auto *DD = new DedicatedDFG(&DF, SubLoop, Factor);
         DF.addDFG(DD);
       }
@@ -755,7 +762,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
   }
 }
 
-ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
+ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
   auto *SBCONFIG = getenv("SBCONFIG");
   DSA_CHECK(SBCONFIG);
   std::string ExtraFlag = "";
@@ -769,17 +776,23 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   if (dsa::utils::ModuleContext().COMPAT_ADG) {
     ExtraFlag += " -a";
   }
-  auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", ExtraFlag, SBCONFIG, FName).str();
-  DSA_LOG(CONFIG) << Cmd;
-  DSA_CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
-
-  std::ifstream Ifs(FName + (BitStream ? ".bits" : "") + ".h");
-  auto DFGs = DF.DFGFilter<DFGBase>();
-
+  auto FName = DF.FileName;
   std::string Stripped(FName);
   while (Stripped.back() != '.')
     Stripped.pop_back();
   Stripped.pop_back();
+
+  if (Schedule) {
+    auto Cmd = formatv("ss_sched --verbose --max-iters=1024 {0} {1} {2} -e 0 > {3}.log 2>&1",
+                       ExtraFlag, SBCONFIG, FName, Stripped).str();
+    DSA_LOG(CONFIG) << Cmd;
+    if (int RetCode = system(Cmd.c_str()) != 0) {
+      return ConfigInfo(Stripped, "", RetCode);
+    }
+  }
+
+  std::ifstream Ifs(FName + (BitStream ? ".bits" : "") + ".h");
+  auto DFGs = DF.DFGFilter<DFGBase>();
 
   int ConfigSize = 0;
   std::string ConfigString;
@@ -807,7 +820,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         DSA_CHECK(sscanf(Stripped.c_str(), "%d_v%d", &X, &Y) == 2);
         int Port;
         Iss >> Port;
-        DSA_LOG(CONFIG) << "sub" << X << "v" << Y << " -> " << Port << "\n";
+        DSA_LOG(CONFIG) << "sub" << X << "v" << Y << " -> " << Port;
         DSA_CHECK(X >= 0 && X < (int) DFGs.size()) << Token << ": " << X << ", " << DFGs.size();
         DSA_CHECK(Y >= 0 && Y < (int) DFGs[X]->Entries.size());
         auto *Entry = DFGs[X]->Entries[Y];
@@ -816,7 +829,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         } else if (auto *CB = dyn_cast<ComputeBody>(Entry)) {
           DSA_CHECK(false) << Token << ": " << X << " " << Y << " This should be deprecated!";
           if (!CB->isImmediateAtomic()) {
-            DSA_LOG(CONFIG) << "OutputPorts:\n";
+            DSA_LOG(CONFIG) << "OutputPorts:";
             auto OutPorts = CB->getOutPorts();
             for (auto *Port : CB->getOutPorts()) {
               (void) Port;
@@ -912,7 +925,6 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         }
       } else {
         std::string Raw;
-        DSA_INFO << ConfigSize;
         for (int i = 0; i < ConfigSize; ++i) { // NOLINT
           DSA_CHECK(std::getline(Ifs, Raw));
           while (isspace(Raw[0])) {
@@ -934,15 +946,23 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
           std::string WordByte((char*)&Word, (char*)&Word + 8);
           ConfigString.insert(ConfigString.end(), WordByte.begin(), WordByte.end());
         }
-        DSA_INFO << ConfigString.size();
         DSA_CHECK(std::getline(Ifs, Raw));
       }
     }
   }
 
+  ConfigInfo Res(Stripped, ConfigString, ConfigSize);
   DSA_LOG(DFG) << "[Config] " << ConfigSize << ": " << ConfigString << "\n";
-
-  return ConfigInfo(Stripped, ConfigString, ConfigSize);
+  {
+    std::ifstream Fin(Stripped + ".log");
+    std::string Raw;
+    while (Fin >> Raw) {
+      if (Raw == "Performance:") {
+        Fin >> Res.EstimatedILP;
+      }
+    }
+  }
+  return Res;
 }
 
 void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
@@ -967,7 +987,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
           DSA_LOG(AFFINE) << *NSCEV;
           auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
           DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest[i],
-                                                             LoopSlice, DLI.TripCount));
+                                                             LoopSlice, DLI.TripCount, LinearOverride));
           DSA_LOG(AFFINE) << i << ": " << DLI.TripCount.back()->toString();
         }
       }
@@ -978,13 +998,15 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
 
     ScalarEvolution &SE;
     DFGLoopInfo &DLI;
+    std::unordered_map<const SCEV*, const SCEV*> &LinearOverride;
 
-    DFGLoopAnalyzer(ScalarEvolution &SE, DFGLoopInfo &DLI) : SE(SE), DLI(DLI) {}
+    DFGLoopAnalyzer(ScalarEvolution &SE, DFGLoopInfo &DLI,
+                    std::unordered_map<const SCEV*, const SCEV*> &L) : SE(SE), DLI(DLI), LinearOverride(L) {}
   };
 
   for (auto *DB : DF.DFGFilter<DFGBase>()) {
     DAR.DLI.emplace_back();
-    DFGLoopAnalyzer DLA(CGC.SE, DAR.DLI.back());
+    DFGLoopAnalyzer DLA(CGC.SE, DAR.DLI.back(), DAR.LinearOverride);
     DB->accept(&DLA);
   }
 }
@@ -1070,14 +1092,14 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
       analyze(APM->Store->getPointerOperand(), APM);
     }
     void analyze(Value *Ptr, DFGEntry *DE) {
+      auto *Raw = SE.getSCEV(Ptr);
+      auto &DLI = DAR.DLI[DE->Parent->ID];
       DSA_CHECK(DE->Parent->ID >= 0 && DE->Parent->ID < (int) DAR.DLI.size())
         << DAR.DLI.size() << " " << DE->Parent->ID;
-      auto &DLI = DAR.DLI[DE->Parent->ID];
-      auto *SCEV = SE.getSCEV(Ptr);
-      auto *Res = analyzeIndexExpr(&SE, SCEV, DE, DLI.LoopNest, DLI.TripCount);
+      DSA_LOG(AFFINE) << *Ptr << " " << *Raw;
+      auto *Res = analyzeIndexExpr(&SE, Raw, DE, DLI.LoopNest, DLI.TripCount, DAR.LinearOverride);
       SW = Res;
       DSA_LOG(AFFINE) << DE->dump() << ": " << Res->toString();
-      DSA_LOG(AFFINE) << *Ptr << " " << *SCEV;
     }
     SEWrapper *SW{nullptr};
     DFGAnalysisResult &DAR;
@@ -1281,6 +1303,8 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     std::unordered_map<DFGEntry*, int> Cnt;
     if (auto *DD = dyn_cast<DedicatedDFG>(Graphs[i])) {
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
+        // Insert it into DAR.
+        DAR.AI.operator[](Acc);
         {
           std::set<Instruction*> Insts;
           FindEquivPHIs(Acc->Operation, Insts);
@@ -1289,17 +1313,16 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
               for (int j = 0; j < (int) Phi->getNumOperands(); ++j) { // NOLINT
                 auto *Val = dyn_cast<Value>(Phi->getOperand(j));
                 if (isa<ConstantData>(Val)) {
-                  // DSA_CHECK(Acc->ResetLevel == -1) << Acc->ResetLevel;
                   auto *BB = Phi->getIncomingBlock(j);
                   DSA_LOG(ACC)
                     << Acc->dump() << " reset by block " << BB->getName() << ", " << *Val;
                   for (int k = 0; k < (int) Loops.size(); ++k) { // NOLINT
                     if (Loops[k]->contains(BB)) {
                       DSA_CHECK(k);
-                      if (Acc->ResetLevel == -1) {
-                        Acc->ResetLevel = k - 1;
+                      if (DAR.AI[Acc].ResetLevel == -1) {
+                        DAR.AI[Acc].ResetLevel = k - 1;
                       } else {
-                        DSA_CHECK(Acc->ResetLevel == k - 1) << *Loops[k];
+                        DSA_CHECK(DAR.AI[Acc].ResetLevel == k - 1) << *Loops[k];
                       }
                       break;
                     }
@@ -1308,8 +1331,8 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
               }
             }
           }
-          if (Acc->ResetLevel == -1) {
-            Acc->ResetLevel = Loops.size() - 1;
+          if (DAR.AI[Acc].ResetLevel == -1) {
+            DAR.AI[Acc].ResetLevel = Loops.size() - 1;
             DSA_LOG(ACC) << Loops.size() << " reset when exiting!";
           }
         }
@@ -1356,6 +1379,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         }
         if (Tag) {
           for (auto *OP : Acc->Parent->EntryFilter<OutputPort>()) {
+            if (!OP->Output) continue;
             auto Upstream = bfsOperands(OP->Parent, OP->Output, CGC.DT).first;
             for (auto *Elem : Upstream) {
               if (auto *DE = OP->Parent->InThisDFG(Elem)) {
@@ -1368,11 +1392,11 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                   for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
                     if (Loops[j]->contains(Consumer)) {
                       DSA_LOG(ACC) << Acc->dump() << " Produce@" << (j - 1);
-                      if (Acc->ProduceLevel == INT_MAX) {
-                        Acc->ProduceLevel = j - 1;
+                      if (DAR.AI[Acc].ProduceLevel == INT_MAX) {
+                        DAR.AI[Acc].ProduceLevel = j - 1;
                       } else {
-                        DSA_CHECK(Acc->ProduceLevel == j - 1)
-                          << Acc->ProduceLevel << " != " << (j - 1);
+                        DSA_CHECK(DAR.AI[Acc].ProduceLevel == j - 1)
+                          << DAR.AI[Acc].ProduceLevel << " != " << (j - 1);
                       }
                       break;
                     }
@@ -1381,36 +1405,38 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
               }
             }
           }
-          // for (auto *User : Acc->Operation->users()) {
-          //   if (auto *Inst = dyn_cast<Instruction>(User)) {
-          //     bool Skip = isa<PHINode>(Inst);
-          //     for (int j = 0; j < (int) Acc->Operation->getNumOperands() && !Skip; ++j) { // NOLINT
-          //       if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
-          //         if (OpInst == Inst) {
-          //           Skip = true;
-          //         }
-          //       }
-          //     }
-          //     if (!Skip) { DSA_LOG(ACC) << "Used by: " << *Inst;
-          //       for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
-          //         if (Loops[j]->contains(Inst)) {
-          //           DSA_LOG(ACC) << Acc->dump() << " Produce@" << j - 1;
-          //           if (Acc->ProduceLevel == INT_MAX) {
-          //             Acc->ProduceLevel = j - 1;
-          //           } else {
-          //             DSA_CHECK(Acc->ProduceLevel == j - 1) <<
-          //               Acc->ProduceLevel << " != " << (j - 1);
-          //           }
-          //           break;
-          //         }
-          //       }
-          //     } else {
-          //       DSA_LOG(ACC) << "Skip: " << *Inst;
-          //     }
-          //   }
+          // @{
+          for (auto *User : Acc->Operation->users()) {
+            if (auto *Inst = dyn_cast<Instruction>(User)) {
+              bool Skip = isa<PHINode>(Inst);
+              for (int j = 0; j < (int) Acc->Operation->getNumOperands() && !Skip; ++j) { // NOLINT
+                if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
+                  if (OpInst == Inst) {
+                    Skip = true;
+                  }
+                }
+              }
+              if (!Skip) { DSA_LOG(ACC) << "Used by: " << *Inst;
+                for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
+                  if (Loops[j]->contains(Inst)) {
+                    DSA_LOG(ACC) << Acc->dump() << " Produce@" << j - 1;
+                    if (DAR.AI[Acc].ProduceLevel == INT_MAX) {
+                      DAR.AI[Acc].ProduceLevel = j - 1;
+                    } else {
+                      DSA_CHECK(DAR.AI[Acc].ProduceLevel == j - 1) <<
+                        DAR.AI[Acc].ProduceLevel << " != " << (j - 1);
+                    }
+                    break;
+                  }
+                }
+              } else {
+                DSA_LOG(ACC) << "Skip: " << *Inst;
+              }
+            }
+          }
           // }
-          if (Acc->ProduceLevel == INT_MAX) {
-            Acc->ProduceLevel = Loops.size() - 1;
+          if (DAR.AI[Acc].ProduceLevel == INT_MAX) {
+            DAR.AI[Acc].ProduceLevel = Loops.size() - 1;
             DSA_LOG(ACC) << Loops.size() << " produce when exiting!";
           }
         }
@@ -1423,35 +1449,39 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         // auto *LC = dyn_cast<LinearCombine>(Iter->second);
         // DSA_CHECK(LC);
         for (auto *Acc : IP->Tagged) {
+          auto &Entry = DAR.AI[Acc];
           if (isa<SLPMemPort>(IP)) {
-            ++Acc->ResetLevel;
-            ++Acc->ProduceLevel;
+            ++Entry.ResetLevel;
+            ++Entry.ProduceLevel;
           }
           // DSA_CHECK(Acc->ResetLevel < (int) LC->Coef.size());
           DSA_LOG(ACC)
-            << Acc->dump() << ", Reset@" << Acc->ResetLevel
-            << ", Produce@" << Acc->ProduceLevel;
+            << Acc->dump() << ", Reset@" << Entry.ResetLevel
+            << ", Produce@" << Entry.ProduceLevel;
         }
-        DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP);
+        DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP, DAR);
       }
     }
   }
 }
 
-int cutoffLevel(InputPort *IP) {
+int cutoffLevel(InputPort *IP, DFGAnalysisResult &DAR) {
+  auto FRed = [&DAR](int X, Accumulator *A) {
+    return std::min(X, std::min(DAR.AI[A].ResetLevel, DAR.AI[A].ProduceLevel));
+  };
   if (IP->Tagged.empty()) {
     return -1;
   }
-  auto FRed = [](int X, Accumulator *A) { return std::min(X, std::min(A->ResetLevel, A->ProduceLevel)); };
   return std::accumulate(IP->Tagged.begin(), IP->Tagged.end(), INT_MAX, FRed);
 }
+
 
 void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
   struct FuseInfoExtractor : DFGEntryVisitor {
     void Visit(MemPort *MP) override {
       DBits = MP->Load->getType()->getScalarSizeInBits();
       Padding = MP->fillMode();
-      CutOff = cutoffLevel(MP);
+      CutOff = cutoffLevel(MP, DAR);
     }
     void Visit(PortMem *PM) override {
       DBits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
@@ -1459,19 +1489,24 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
     void Visit(SLPMemPort *SMP) override {
       auto *MP = SMP->Coal[0];
       DBits = MP->Load->getType()->getScalarSizeInBits();
-      CutOff = cutoffLevel(SMP);
+      CutOff = cutoffLevel(SMP, DAR);
+      SLP = true;
     }
     void Visit(SLPPortMem *SPM) override {
       auto *PM = SPM->Coal[0];
       DBits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
+      SLP = true;
     }
     int DBits{-1};
     int Padding{0};
     int CutOff{-1};
+    bool SLP{false};
+    DFGAnalysisResult &DAR;
+    FuseInfoExtractor(DFGAnalysisResult &DAR) : DAR(DAR) {}
   };
   for (auto &Elem : AffineInfoCache) {
     if (auto *Pattern = dyn_cast<LinearCombine>(Elem.second)) {
-      FuseInfoExtractor FIE;
+      FuseInfoExtractor FIE(*this);
       Elem.first->accept(&FIE);
       if (FIE.CutOff == -1) {
         FIE.CutOff = Pattern->TripCount.size() - 1;
@@ -1481,27 +1516,28 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
       DSA_LOG(FUSE) << "Before: " << Pattern->toString() << ", CutOff: " << FIE.CutOff;
       int Before = Pattern->Coef.size();
       fuseInnerDimensions(*Pattern, FIE.DBits / 8, Elem.first->Parent->getUnroll(), SE,
-                          Pattern->TripCount.size() - FIE.CutOff);
+                          Pattern->TripCount.size() - FIE.CutOff, FIE.SLP);
       DSA_LOG(FUSE) << "After: " << Pattern->toString();
       if (auto *IP = dyn_cast<InputPort>(Elem.first)) {
         int Delta = Before - Pattern->Coef.size();
         DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
         DSA_LOG(FUSE) << IP->dump();
         for (auto *Acc : IP->Tagged) {
-          Acc->ResetLevel -= Delta;
-          Acc->ProduceLevel -= Delta;
-          DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
+          auto &Entry = AI[Acc];
+          Entry.ResetLevel -= Delta;
+          Entry.ProduceLevel -= Delta;
+          DSA_LOG(FUSE) << Acc->dump() << ": " << Entry.ResetLevel;
         }
       }
     }
   }
 }
 
-int resetLevel(InputPort *IP) {
+int resetLevel(InputPort *IP, DFGAnalysisResult &DAR) {
   if (IP->Tagged.empty()) {
     return -1;
   }
-  auto FRed = [](int X, Accumulator *A) { return std::min(X, A->ResetLevel); };
+  auto FRed = [&DAR](int X, Accumulator *A) { return std::min(X, DAR.AI[A].ResetLevel); };
   return std::accumulate(IP->Tagged.begin(), IP->Tagged.end(), INT_MAX, FRed);
 }
 
@@ -1588,6 +1624,134 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
   return SE.DS;
 }
 
+DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
+  if (dsa::utils::ModuleContext().COMPAT_ADG) {
+    dsa::ContextFlags::Global().adg_compat = true;
+  }
+  auto *SBCONFIG = getenv("SBCONFIG");
+  DSA_CHECK(SBCONFIG);
+  SSModel Model(SBCONFIG);
+  auto *BFI = CGC.BFI;
+  for (auto *Elem : DF.DFGs) {
+    Idx.push_back(0);
+    Freq.push_back(0);
+    if (Elem->getUnroll() == -1) {
+      Degrees.push_back({8, 4, 2, 1});
+      Explored.push_back(true);
+      auto *DD = dyn_cast<DedicatedDFG>(Elem);
+      for (auto *BB : DD->InnerMost()->getBlocks()) {
+        Freq.back() += BFI->getBlockFreq(BB).getMaxFrequency();
+      }
+    } else {
+      Explored.push_back(false);
+      Degrees.push_back({Elem->getUnroll()});
+    }
+  }
+}
+
+bool DFGUnroll::hasNext() {
+  return Idx.back() < (int) Degrees.back().size();
+}
+
+std::string DFGUnroll::toString() {
+  std::ostringstream OSS;
+  for (int i = 0; i < (int) Idx.size(); ++i) { // NOLINT
+    OSS << "_" << Degrees[i][Idx[i]];
+  }
+  return OSS.str();
+}
+
+bool DFGUnroll::next(bool Apply) {
+  DSA_CHECK(hasNext());
+  do {
+    ++Cnt;
+    auto &DFGs = DF.DFGs;
+    bool Carry = true;
+    DF.FileName = DF.Func.getName().str() + "_" + std::to_string(DF.ID) + toString() + ".dfg";
+    for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
+      auto *DFG = DF.DFGs[i];
+      if (auto *DD = dyn_cast<DedicatedDFG>(DFG)) {
+        if (Apply) {
+          DD->UnrollFactor = Degrees[i][Idx[i]];
+        }
+        if (Carry) {
+          ++Idx[i];
+          Carry = false;
+        }
+        if (Idx[i] == (int) Degrees[i].size()) {
+          Idx[i] = 0;
+          Carry = true;
+        }
+      }
+    }
+    if (Carry) {
+      Idx.back() = Degrees.back().size();
+    }
+    bool Good = true;
+    for (int i = 0; i < (int) DFGs.size() && Good; ++i) { // NOLINT
+      if (auto *DDI = dyn_cast<DedicatedDFG>(DFGs[i])) {
+        if (!Explored[i]) {
+          continue;
+        }
+        for (int j = 0; j < (int) DFGs.size() && Good; ++j) { // NOLINT
+          if (!Explored[j]) {
+            continue;
+          }
+          if (i == j) {
+            continue;
+          }
+          if (auto *DDJ = dyn_cast<DedicatedDFG>(DFGs[j])) {
+            if (Freq[i] <= Freq[j] && DDI->UnrollFactor > DDJ->UnrollFactor) {
+              Good = false;
+            }
+          }
+        }
+      }
+    }
+    if (!Good) {
+      ++Skip;
+      continue;
+    }
+    DAR.emplace_back();
+    return true;
+  } while (hasNext());
+  return false;
+}
+
+DFGAnalysisResult &DFGUnroll::best() {
+  int Best = 0;
+  for (int i = 1; i < (int) DAR.size(); ++i) { // NOLINT
+    if (DAR[Best].CI.EstimatedILP < DAR[i].CI.EstimatedILP) {
+      Best = i;
+    }
+  }
+  return DAR[Best];
+}
+
+std::unordered_map<const SCEV*, const SCEV*>
+gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenContext &CGC) {
+  std::unordered_map<const SCEV*, const SCEV*> Res;
+  std::vector<IntrinsicInst*> ToRemove;
+  auto F = [&Res, &ToRemove, &CGC](Instruction *I) {
+    auto &SE = CGC.SE;
+    if (auto *II = dyn_cast<IntrinsicInst>(I)) {
+      if (II->getIntrinsicID() == Intrinsic::ss_fifo) {
+        Value *Stripped = II->getOperand(0);
+        if (auto *BCI = dyn_cast<BitCastInst>(Stripped)) {
+          Stripped = BCI->getOperand(0);
+        }
+        Res[SE.getSCEV(Stripped)] = SE.getSCEV(II->getOperand(1));
+        ToRemove.push_back(II);
+      }
+    }
+  };
+  traverseAndApply(Start, End, CGC.DT, F);
+  for (auto *Elem : ToRemove) {
+    // Elem->replaceAllUsesWith(UndefValue::get(Elem->getType()));
+    Elem->eraseFromParent();
+  }
+  return Res;
+}
 
 } // namespace analysis
 } // namespace dsa

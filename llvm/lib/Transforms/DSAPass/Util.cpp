@@ -260,3 +260,21 @@ const SCEV *stripCast(const SCEV *SE) {
   }
   return SE;
 }
+
+
+void traverseAndApply(Instruction *Start, Instruction *Terminator, DominatorTree *DT,
+                      std::function<void(Instruction*)> F) {
+  DSA_CHECK(DT->dominates(Start, Terminator));
+  for (auto *BB : breadth_first(Start->getParent())) {
+    if (DT->dominates(Start, BB) || BB == Start->getParent()) {
+      auto *Begin = BB == Start->getParent() ? Start : &BB->front();
+      auto *End = BB == Terminator->getParent() ? Terminator : &BB->back();
+      DSA_LOG(TRAVERSE) << BB->getName();
+      for (auto *I = Begin; I != End; I = I->getNextNode()) {
+        DSA_LOG(TRAVERSE) << *I;
+        F(I);
+      }
+      F(End);
+    }
+  }
+}

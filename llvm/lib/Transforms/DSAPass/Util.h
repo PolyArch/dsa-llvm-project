@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -11,6 +12,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
+
 
 using namespace llvm;
 
@@ -179,6 +181,12 @@ void FindEquivPHIs(Instruction *, std::set<Instruction *> &);
 int PredicateToInt(ICmpInst::Predicate Pred, bool TF, bool Reverse);
 
 BasicBlock *FindLoopPrologue(Loop *L);
+
+/*!
+ * \brief
+ */
+void traverseAndApply(Instruction *Start, Instruction *End, DominatorTree *DT,
+                      std::function<void(Instruction*)>);
 
 class DFGEntry;
 

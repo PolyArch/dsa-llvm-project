@@ -23,6 +23,7 @@ enum DataStreamKind {
   kIndirect2D
 };
 
+
 /*!
  * \brief The base class of indirect stream emission.
  */
@@ -185,15 +186,41 @@ struct Indirect2D : DataStream {
 
 namespace analysis {
 
+
 /*!
  * \brief Information of the bitstream.
  */
 struct ConfigInfo {
+  /*!
+   * \brief The name of the bitstream array.
+   */
   std::string Name;
+  /*!
+   * \brief The content of the bitstream.
+   */
   std::string Bitstream;
-  int Size;
+  union {
+    /*!
+     * \brief The size of the bitstream array.
+     */
+    int Size;
+    /*!
+     * \brief The code of scheduler return when failed.
+     */
+    int Code;
+  };
+  /*
+   * \brief The performance estimated for the DFG.
+   */
+  double EstimatedILP{0};
+  /*!
+   * \brief If this is an empty configuration.
+   */
+  bool empty() { return Bitstream.empty(); }
+
   ConfigInfo(const std::string &N, const std::string &B, int S)
       : Name(N), Bitstream(B), Size(S) {}
+
   ConfigInfo() : Name(""), Bitstream(""), Size(0) {}
 };
 
@@ -242,6 +269,19 @@ struct DFGLoopInfo {
     LoopNest(L), TripCount(T) {}
 };
 
+struct AccInfo {
+  /*!
+   * \brief The loop level of accumulator register resetting.
+   */
+  int ResetLevel;
+  /*!
+   * \brief The loop level of finalizing the result.
+   */
+  int ProduceLevel;
+
+  AccInfo(int R = -1, int P = INT_MAX) : ResetLevel(R), ProduceLevel(P) {}
+};
+
 
 /*! \brief The result of DFG analysis. */
 struct DFGAnalysisResult {
@@ -259,6 +299,10 @@ struct DFGAnalysisResult {
    */
   std::vector<DFGLoopInfo> DLI;
   /*!
+   * \brief The information of an accumulator.
+   */
+  std::unordered_map<Accumulator*, AccInfo> AI;
+  /*!
    * \brief Data structures for streams that are ready-codegen.
    */
   std::unordered_map<DFGEntry*, xform::DataStream*> Streams;
@@ -270,6 +314,10 @@ struct DFGAnalysisResult {
    */
   std::unordered_map<DFGEntry*, SEWrapper*> AffineInfoCache;
  public:
+  /*!
+   * \brief Override linear stream analysis.
+   */
+  std::unordered_map<const SCEV*, const SCEV*> LinearOverride;
   /*!
    * \brief
    */
@@ -288,12 +336,87 @@ struct DFGAnalysisResult {
   void fuseAffineDimensions(ScalarEvolution &SE);
 };
 
+
+/*!
+ * \brief Enumerate the unrolling degree.
+ */
+struct DFGUnroll {
+
+  DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC);
+
+  /*!
+   * \brief If we have next points to enumerate.
+   */
+  bool hasNext();
+
+  /*!
+   * \brief The next point of the DFG file.
+   * \param Apply If it is applied.
+   */
+  bool next(bool Apply);
+
+  /*!
+   * \brief The suffix of the file name.
+   */
+  std::string toString();
+
+  /*!
+   * \brief The DFG file to explore
+   */
+  DFGFile &DF;
+
+  /*
+   * \brief The total number of points to be explored.
+   */
+  int Cnt{0};
+
+  /*!
+   * \brief The total number skipped because of pruning.
+   */
+  int Skip{0};
+
+  /*!
+   * \brief The results of scheduling.
+   */
+  int BestAt{-1};
+
+  /*!
+   * \brief The current enumeration.
+   */
+  std::vector<int> Idx;
+
+  std::vector<bool> Explored;
+
+  /*!
+   * \brief The total degrees to enum.
+   */
+  std::vector<std::vector<int>> Degrees;
+
+  /*!
+   * \brief Sumup the block freqency.
+   */
+  std::vector<int> Freq;
+
+  /*!
+   * \brief The result of DFG analysis.
+   */
+  std::vector<DFGAnalysisResult> DAR;
+
+  DFGAnalysisResult &best();
+};
+
 /*!
  * \brief Gather all the pairs of dsa.config.start/end
  * \param F The function to be analyzed.
  */
 std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
 gatherConfigScope(Function &F);
+
+/*!
+ * \brief
+ */
+std::unordered_map<const SCEV*, const SCEV*>
+gatherLinearOverride(IntrinsicInst *, IntrinsicInst *, xform::CodeGenContext &CGC);
 
 /*!
  * \brief Gather the loop information of the loop nest that wraps the DFG.
@@ -319,11 +442,10 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
 
 /*!
  * \brief Extract the port number from the generated schedule.
- * \param FName The emitted file to be analyzed.
  * \param Ports Write the result in the allocated vector buffer.
  * \param CMIs The coalesced memory.
  */
-ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI);
+ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule);
 
 /*!
  * \brief Analyze the information of accumulator.
@@ -370,7 +492,7 @@ analyzedWrapperToStream(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
  *        affine loop level of resetting the register.
  * \param IP The input port to inspect.
  */
-int resetLevel(InputPort *IP);
+int resetLevel(InputPort *IP, DFGAnalysisResult &DAR);
 
 /*!
  * \brief TODO(@were): doc this!

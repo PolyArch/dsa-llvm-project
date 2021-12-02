@@ -1057,11 +1057,11 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
 
   // A simple hack to support pre-emit non constants
   std::map<const Attr *, std::pair<llvm::Value *, llvm::Value *>> Emitted;
-  for (auto Attr : ForAttrs) {
-    if (auto SA = dyn_cast<SSDfgAttr>(Attr)) {
+  for (const auto *Attr : ForAttrs) {
+    if (const auto *SA = dyn_cast<SSDfgAttr>(Attr)) {
       if (SA->getType() != SSDfgAttr::HintType::Unroll && SA->getValue() != nullptr) {
         if (SA->getValue()->getStmtClass() == Stmt::StmtClass::OMPArraySectionExprClass) {
-          auto E = static_cast<OMPArraySectionExpr*>(SA->getValue());
+          auto *E = static_cast<OMPArraySectionExpr*>(SA->getValue());
           auto LB = EmitOMPArraySectionExpr(E, true);
           auto UB = EmitOMPArraySectionExpr(E, false);
           Emitted[Attr] = std::make_pair(LB.getPointer(*this), UB.getPointer(*this));
@@ -1070,12 +1070,26 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
           Emitted[Attr] = std::make_pair(LV.getPointer(*this), nullptr);
         }
       }
+    } else if (const auto *SSD = dyn_cast<SSDataStreamAttr>(Attr)) {
+      std::vector<llvm::Value*> Args;
+      std::vector<Expr*> Raw(SSD->value().begin(), SSD->value().end());
+      if (Raw.size() == 2) {
+        auto *Array = EmitScalarExpr(Raw[0]);
+        auto *Length = EmitScalarExpr(Raw[1]);
+        auto *Ptr = Builder.CreateBitCast(Array, Builder.getInt8PtrTy());
+        Length = Builder.CreateIntCast(Length, Builder.getInt64Ty(), true);
+        static auto *FI =
+          llvm::Intrinsic::getDeclaration(&CGM.getModule(), llvm::Intrinsic::ss_fifo);
+        auto *Call = Builder.CreateCall(FI, {Ptr, Length});
+      } else {
+        assert(Raw.empty());
+      }
     }
   }
 
   LoopStack.push(CondBlock, CGM.getContext(), CGM.getCodeGenOpts(), ForAttrs,
                  SourceLocToDebugLoc(R.getBegin()),
-                 SourceLocToDebugLoc(R.getEnd()), Emitted);
+                 SourceLocToDebugLoc(R.getEnd()));
 
   // If the for loop doesn't have an increment we can just use the
   // condition as the continue block.  Otherwise we'll need to create

@@ -163,15 +163,6 @@ struct Predicate : DFGEntry {
 // A accumulator Instruction
 struct Accumulator : ComputeBody {
 
-  /*!
-   * \brief When hitting the end of the loop level, the accumulator should be reset.
-   */
-  int ResetLevel{-1};
-  /*!
-   * \brief When hitting the end of the loop level, the accumulator should produce value.
-   */
-  int ProduceLevel{INT_MAX};
-
   Accumulator(DFGBase *Parent, Instruction *Operation);
   /*!
    * \brief If this value should be unrolled in DFG.

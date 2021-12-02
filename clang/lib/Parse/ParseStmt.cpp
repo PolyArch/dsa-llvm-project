@@ -2582,14 +2582,28 @@ StmtResult Parser::ParsePragmaStreamSpecialize(clang::Parser::StmtVector &Stmts,
       SSAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
                      Hint.PragmaNameLoc->Loc, nullptr, 0, ParsedAttr::AS_Pragma);
     } else {
-      for (auto &elem : Hint.Clauses) {
+      for (int i = 0; i < (int) Hint.Clauses.size(); ++i) {
+        auto &Elem = Hint.Clauses[i];
         SmallVector<ArgsUnion, 0> Args;
-        auto *IL = IdentifierLoc::create(Actions.Context,
-                                         elem.first.getLocation(),
-                                         elem.first.getIdentifierInfo());
-        Args.push_back(IL);
-        if (elem.second) {
-          Args.push_back(elem.second);
+        // If ".array", process ".length" all together.
+        if (auto *II = Elem.first.getIdentifierInfo()) {
+          if (II->getName().endswith(".array")) {
+            auto &Length = Hint.Clauses[i + 1];
+            assert(Length.first.getIdentifierInfo()->getName().endswith(".length"));
+            assert(Elem.second);
+            Args.push_back(Elem.second);
+            Args.push_back(Length.second);
+            ++i;
+          }
+        }
+        if (Args.empty()) {
+          auto *IL = IdentifierLoc::create(Actions.Context,
+                                           Elem.first.getLocation(),
+                                           Elem.first.getIdentifierInfo());
+          Args.push_back(IL);
+          if (Elem.second) {
+            Args.push_back(Elem.second);
+          }
         }
         SSAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
                        Hint.PragmaNameLoc->Loc, Args.begin(), Args.size(),

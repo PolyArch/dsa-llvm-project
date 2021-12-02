@@ -130,7 +130,8 @@ std::string SWCast::toString() const {
 
 SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
                             const std::vector<Loop *> &Loops,
-                            const std::vector<SEWrapper *> &TripCount) {
+                            const std::vector<SEWrapper *> &TripCount,
+                            const std::unordered_map<const SCEV*, const SCEV*> &LinearOverride) {
   int i = 0; // NOLINT
   for (int N = Loops.size(); i < N; ++i) {
     if (!SE->isLoopInvariant(Raw, Loops[i])) {
@@ -144,13 +145,13 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
       return LI;
     }
   }
-  if (auto *Res = analyzeCast(SE, Raw, Parent, Loops, TripCount)) {
+  if (auto *Res = analyzeCast(SE, Raw, Parent, Loops, TripCount, LinearOverride)) {
     return Res;
   }
-  if (auto *Res = analyzeIndirectPointer(SE, Raw, Parent, Loops, TripCount)) {
+  if (auto *Res = analyzeIndirectPointer(SE, Raw, Parent, Loops, TripCount, LinearOverride)) {
     return Res;
   }
-  if (auto *Res = analyzeBinary(SE, Raw, Parent, Loops, TripCount)) {
+  if (auto *Res = analyzeBinary(SE, Raw, Parent, Loops, TripCount, LinearOverride)) {
     return Res;
   }
   DSA_CHECK(isa<SCEVAddRecExpr>(Raw)) << *Raw;
@@ -176,7 +177,7 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
       std::vector<Loop*> SliceLoop(Loops.begin() + i + 1, Loops.end());
       std::vector<SEWrapper*> SliceTripCount(TripCount.begin() + i + 1, TripCount.end());
       Res->Coef.push_back(analyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Res,
-                                           SliceLoop, SliceTripCount));
+                                           SliceLoop, SliceTripCount, LinearOverride));
       Cur = SARE->getStart();
     } else if (SE->isLoopInvariant(Cur, Loops[i])) {
       Res->Coef.push_back(LoopInvariant::get(Res, SE->getConstant(APInt(64, 0))));
@@ -197,11 +198,22 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   // DSA_CHECK(Res->Coef.size() == Loops.size()) << Res->Coef.size() << " != " << Loops.size();
   std::vector<Loop*> ResidueLoops(Loops.begin() + i, Loops.end());
   std::vector<SEWrapper*> ResidueTripCount(TripCount.begin() + i, TripCount.end());
-  Res->Base = analyzeIndexExpr(SE, Cur, Res, ResidueLoops, ResidueTripCount);
+  // A simple hack overrides linear analysis.
+  if (auto *Bin = analyzeBinary(SE, Cur, Res, ResidueLoops, ResidueTripCount, LinearOverride)) {
+    if (isa<SWBinary>(Bin)) {
+      Res->Base = Bin;
+    } else {
+      DSA_CHECK(isa<LinearCombine>(Bin));
+      return Bin;
+    }
+  } else {
+    Res->Base = analyzeIndexExpr(SE, Cur, Res, ResidueLoops, ResidueTripCount, LinearOverride);
+  }
   return Res;
 }
 
-void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvolution &SE, int CutOff) {
+void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvolution &SE, int CutOff,
+                         bool IsSLP) {
   if (LI.Coef.empty()) {
     return;
   }
@@ -214,15 +226,29 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
 
   auto &Coef = LI.Coef;
   auto &Loop = LI.TripCount;
+  int Iteration = 0;
   while ((int) Coef.size() > CutOff) {
+    ++Iteration;
     if (const auto *S1D = constInt(Coef.front())) {
       if (((int) *S1D) == DType) {
         DSA_LOG(FUSE) << "S1D: " << *S1D << " , DType" << DType;
         if (const auto *N = constInt(Loop[0])) {
-          // Fuse it only when it is divisible.
           DSA_LOG(FUSE) << "InnerN: " << *N;
-          if ((*N + 1) % Unroll) {
-            break;
+          // If the first dimension is derived from SLP fusion.
+          if (Iteration == 1 && IsSLP) {
+            // The outer (2nd) dimension is the actual dimension to check.
+            if (const auto *M = constInt(Loop[1])) {
+              if (*M % Unroll) {
+                break;
+              }
+            } else {
+              break;
+            }
+          } else {
+            // Fuse it only when it is divisible for normal case.
+            if (*N % Unroll) {
+              break;
+            }
           }
           if (const auto *S2D = constInt(Coef[1])) {
             DSA_LOG(FUSE) << "Stride2D: " << *S2D;
@@ -252,20 +278,34 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
   LI.TripCount.insert(LI.TripCount.begin(), SlicedLoop.begin(), SlicedLoop.end());
 }
 
-SWBinary *analyzeBinary(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
-                        const std::vector<Loop *> &Loops,
-                        const std::vector<SEWrapper *> &TripCount) {
+SEWrapper *analyzeBinary(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
+                         const std::vector<Loop *> &Loops,
+                         const std::vector<SEWrapper *> &TripCount,
+                         const std::unordered_map<const SCEV*, const SCEV*> &LinearOverride) {
   SWBinary *Res = nullptr;
   if (auto *Add = dyn_cast<SCEVAddExpr>(Raw)) {
+    {
+      for (int i = 0; i < 2; ++i) { // NOLINT
+        auto Iter = LinearOverride.find(Add->getOperand(i));
+        if (Iter != LinearOverride.end()) {
+          auto *LC = new LinearCombine(Parent, Raw);
+          LC->Base = analyzeIndexExpr(SE, Iter->first, Parent, {}, {}, {});
+          // TODO(@were): Fix the dtype.
+          LC->Coef.push_back(LoopInvariant::get(Parent, SE->getConstant(APInt(64, 8))));
+          LC->TripCount.push_back(analyzeIndexExpr(SE, Iter->second, Parent, {}, {}, {}));
+          return LC;
+        }
+      }
+    }
     Res = new SWBinary(Parent, Raw, 0);
-    Res->A = analyzeIndexExpr(SE, Add->getOperand(0), Parent, Loops, TripCount);
-    Res->B = analyzeIndexExpr(SE, Add->getOperand(1), Parent, Loops, TripCount);
+    Res->A = analyzeIndexExpr(SE, Add->getOperand(0), Parent, Loops, TripCount, LinearOverride);
+    Res->B = analyzeIndexExpr(SE, Add->getOperand(1), Parent, Loops, TripCount, LinearOverride);
     return Res;
   }
   if (auto *Mul = dyn_cast<SCEVMulExpr>(Raw)) {
     Res = new SWBinary(Parent, Raw, 1);
-    Res->A = analyzeIndexExpr(SE, Mul->getOperand(0), Parent, Loops, TripCount);
-    Res->B = analyzeIndexExpr(SE, Mul->getOperand(1), Parent, Loops, TripCount);
+    Res->A = analyzeIndexExpr(SE, Mul->getOperand(0), Parent, Loops, TripCount, LinearOverride);
+    Res->B = analyzeIndexExpr(SE, Mul->getOperand(1), Parent, Loops, TripCount, LinearOverride);
     return Res;
   }
   return Res;
@@ -273,10 +313,11 @@ SWBinary *analyzeBinary(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
 
 SWCast *analyzeCast(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
                     const std::vector<Loop *> &Loops,
-                    const std::vector<SEWrapper *> &TripCount) {
+                    const std::vector<SEWrapper *> &TripCount,
+                    const std::unordered_map<const SCEV*, const SCEV*> &LinearOverride) {
   if (auto *SCE = dyn_cast<SCEVCastExpr>(Raw)) {
     auto *Res = new SWCast(Parent, SCE);
-    Res->Stripped = analyzeIndexExpr(SE, SCE->getOperand(0), Parent, Loops, TripCount);
+    Res->Stripped = analyzeIndexExpr(SE, SCE->getOperand(0), Parent, Loops, TripCount, LinearOverride);
     return Res;
   }
   return nullptr;
@@ -288,13 +329,14 @@ std::string SWBinary::toString() const {
 
 IndirectPointer* analyzeIndirectPointer(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
                                         const std::vector<Loop *> &Loops,
-                                        const std::vector<SEWrapper *> &TripCount) {
+                                        const std::vector<SEWrapper *> &TripCount,
+                                        const std::unordered_map<const SCEV*, const SCEV*> &LinearOverride) {
   if (auto *SU = dyn_cast<SCEVUnknown>(Raw)) {
     auto *Val = SU->getValue();
     if (auto *Load = dyn_cast<LoadInst>(Val)) {
       auto *Res = new IndirectPointer(Parent, Raw, Load);
       const auto *Raw = SE->getSCEV(Load->getPointerOperand());
-      Res->Pointer = analyzeIndexExpr(SE, Raw, Parent, Loops, TripCount);
+      Res->Pointer = analyzeIndexExpr(SE, Raw, Parent, Loops, TripCount, LinearOverride);
       return Res;
     }
   }
@@ -326,14 +368,14 @@ struct StreamAnalysisPass : public FunctionPass {
           auto *Index = Load->getPointerOperand();
           DSA_CHECK(SE->isSCEVable(Index->getType()));
           auto *LI = analyzeIndexExpr(SE, SE->getSCEV(Index), Load, Loops,
-                                      std::vector<SEWrapper*>(Loops.size(), nullptr));
+                                      std::vector<SEWrapper*>(Loops.size(), nullptr), {});
           DSA_LOG(LOOP) << LI->toString();
         }
       }
     }
     for (auto *L : Loops) {
       auto *LI = analyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), L, Loops,
-                                  std::vector<SEWrapper*>(Loops.size(), nullptr));
+                                  std::vector<SEWrapper*>(Loops.size(), nullptr), {});
       DSA_LOG(LOOP) << LI->toString();
     }
   }

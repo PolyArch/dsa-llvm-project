@@ -250,7 +250,7 @@ Value *DedicatedDFG::ProdTripCount(int x, Instruction *InsertBefore) { // NOLINT
 }
 
 DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll) // NOLINT
-    : DFGBase(Parent_), UnrollFactor(std::max(1, Unroll)) {
+    : DFGBase(Parent_), UnrollFactor(Unroll) {
 
   TyEnum = DFGBase::Dedicated;
 
@@ -651,9 +651,9 @@ template <typename DFGType> void AddDFG(DFGFile *DF, MDNode *Ptr, Loop *LI) { //
   DF->addDFG(new DFGType(DF, LI, Factor));
 }
 
-DFGFile::DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End,
+DFGFile::DFGFile(IntrinsicInst *Start, IntrinsicInst *End,
                  StreamSpecialize *Query)
-    : FileName(Name), Func(*Start->getParent()->getParent()), Config(Start),
+    : Func(*Start->getParent()->getParent()), Config(Start),
       Fence(End), Query(Query) {}
 
 int getPortImpl() {

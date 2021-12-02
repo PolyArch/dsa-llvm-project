@@ -90,10 +90,6 @@ struct LoopAttributes {
   bool SSDfgDedicated;
   /// Value for llvm.loop.ss.datamove metadata.
   bool SSDataMove;
-
-  /// Inputs and outputs dependence of the given DFG
-  enum DependKind { In, Out, InOut };
-  llvm::SmallVector<std::tuple<std::string, llvm::Value*, llvm::Value*>, 0> DependClauses;
 };
 
 /// Information used when generating a structured loop.
@@ -225,9 +221,7 @@ public:
   void push(llvm::BasicBlock *Header, clang::ASTContext &Ctx,
             const clang::CodeGenOptions &CGOpts,
             llvm::ArrayRef<const Attr *> Attrs, const llvm::DebugLoc &StartLoc,
-            const llvm::DebugLoc &EndLoc,
-            const std::map<const clang::Attr *, std::pair<llvm::Value *, llvm::Value *>> &Emitted
-              = std::map<const clang::Attr *, std::pair<llvm::Value *, llvm::Value *>>());
+            const llvm::DebugLoc &EndLoc);
 
   /// End the current loop.
   void pop();
@@ -305,11 +299,6 @@ public:
   /// \brief Set the current loop level the outer-most stream dectection.
   void setSSStreamLevel(LoopAttributes::StreamLevel Enable) { StagedAttrs.SSDataStream = Enable; }
 
-  /// \brief Push DFG dependent hint to loop attributes.
-  void pushSSDfgDepend(const std::string &HintType,
-                       const std::pair<llvm::Value *, llvm::Value *> Val) {
-    StagedAttrs.DependClauses.push_back(std::make_tuple(HintType, Val.first, Val.second));
-  }
 
 private:
   /// Returns true if there is LoopInfo on the stack.

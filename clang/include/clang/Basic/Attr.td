@@ -3530,7 +3530,7 @@ def SSDataStream : Attr {
   /// stream: Indicates from this loop level to the loop level DFG is
   ///         annotated will be loops form data streams
   let Spellings = [Pragma<"ss", "stream">];
-  let Args = [BoolArgument<"Barrier">];
+  let Args = [StringArgument<"Key">, VariadicExprArgument<"Value">];
 
   let AdditionalMembers = [{
     void printPrettyPragma(raw_ostream & OS, const PrintingPolicy &Policy) const {

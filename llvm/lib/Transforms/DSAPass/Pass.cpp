@@ -56,15 +56,14 @@ bool StreamSpecialize::runOnModule(Module &M) {
 }
 
 bool StreamSpecialize::runOnFunction(Function &F) {
+  DSA_LOG(PASS) << "Processing Function: " << F.getName();
 
   if (!dsa::utils::ModuleContext().TEMPORAL) {
     dsa::xform::eliminateTemporal(F);
   }
 
-
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
-
 
   auto ScopePairs = dsa::analysis::gatherConfigScope(F);
   if (!ScopePairs.empty()) {
@@ -72,54 +71,93 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DSARegs = dsa::xform::injectDSARegisterFile(F);
     }
   } else {
-    LLVM_DEBUG(DSA_INFO << "No need to transform " << F.getName() << "\n");
+    DSA_LOG(PASS) << "No need to transform " << F.getName();
+    return false;
   }
-  LLVM_DEBUG(DSA_INFO << "Transforming " << F.getName() << "\n");
+  DSA_LOG(PASS) << "Transforming " << F.getName();
   SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
-  dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI);
+  dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI, BFI);
+  bool GlobalSuccessSchedule = true;
   for (int i = 0, N = ScopePairs.size(); i < N; ++i) { // NOLINT
-    dsa::analysis::DFGAnalysisResult DAR;
-    std::string Name = F.getName().str() + "_dfg_" + std::to_string(i) + ".dfg";
-    DSA_LOG(PASS) << Name;
     auto *Start = ScopePairs[i].first;
     auto *End = ScopePairs[i].second;
-    DFGFile DF(Name, Start, End, this);
+    auto LinearOverride = dsa::analysis::gatherLinearOverride(Start, End, CGC);
+
+    DFGFile DF(Start, End, this);
+    DF.ID = i;
     DSA_LOG(PASS) << i << ": Extracting DFG IR...";
     dsa::analysis::extractDFGFromScope(DF, CGC);
-    DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
-    dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
-    DSA_LOG(PASS) << i << ": Analyzing affine memory access...";
-    DAR.initAffineCache(DF, CGC.SE);
-    DSA_LOG(PASS) << i << ": Coalescing SLP memories...";
-    dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
-    DSA_LOG(PASS) << i << ": Analyzing accumulators...";
-    dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);
-    DSA_LOG(PASS) << i << ": Fusing affined dimensions...";
-    DAR.fuseAffineDimensions(CGC.SE);
-    DSA_LOG(PASS) << i << ": Extracting SPAD...";
-    dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
-    DSA_LOG(PASS) << i << ": Emitting DFG...";
-    {
-      std::error_code EC;
-      llvm::raw_fd_ostream RFO(DF.getName(), EC);
-      dsa::xform::emitDFG(RFO, &DF, DAR, CGC);
+    dsa::analysis::DFGUnroll DU(DF, CGC);
+    bool LocalSuccessSchedule = false;
+    while (DU.hasNext()) {
+      DU.next(true);
+      dsa::analysis::DFGAnalysisResult &DAR = DU.DAR.back();
+      DAR.LinearOverride = LinearOverride;
+      DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
+      dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
+      DSA_LOG(PASS) << i << ": Analyzing affine memory access...";
+      DAR.initAffineCache(DF, CGC.SE);
+      DSA_LOG(PASS) << i << ": Coalescing SLP memories...";
+      dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
+      DSA_LOG(PASS) << i << ": Analyzing accumulators...";
+      dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);
+      DSA_LOG(PASS) << i << ": Fusing affined dimensions...";
+      DAR.fuseAffineDimensions(CGC.SE);
+      DSA_LOG(PASS) << i << ": Extracting SPAD...";
+      dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
+      DSA_LOG(PASS) << i << ": Emitting DFG...";
+      {
+        std::error_code EC;
+        llvm::raw_fd_ostream RFO(DF.getName(), EC);
+        dsa::xform::emitDFG(RFO, &DF, DAR, CGC);
+      }
+      // If extraction only, we do not schedule and analyze.
+      if (dsa::utils::ModuleContext().EXTRACT) {
+        DSA_LOG(PASS) << i << ": Extracting DFG only, don't transform...";
+        continue;
+      }
+      DSA_LOG(PASS) << i << ": Scheduling DFG, and extracting port information...";
+      DAR.CI = dsa::analysis::extractDFGPorts(DF, DAR.SI, true);
+      auto &CI = DAR.CI;
+      DSA_LOG(DSE) << "Exploring: " << DF.FileName << ", " << CI.EstimatedILP;
+      if (CI.empty()) {
+        DSA_LOG(PASS) << DF.getName() << " failed to schedule!";
+        continue;
+      }
+      LocalSuccessSchedule = true;
     }
-    // If extraction only, we do not schedule and analyze.
-    if (dsa::utils::ModuleContext().EXTRACT) {
-      DSA_LOG(PASS) << i << ": Extracting DFG only, don't transform...";
-      continue;
+    if (!dsa::utils::ModuleContext().EXTRACT) {
+      dsa::analysis::DFGAnalysisResult &DAR = DU.best();
+      auto &CI = DAR.CI;
+      DF.FileName = CI.Name + ".dfg";
+      {
+        std::string Raw = CI.Name;
+        int R = Raw.size(), L = Raw.size() - 1;
+        for (int i = DF.DFGs.size() - 1; i >= 0; --i) { // NOLINT
+          while (L >= 0 && Raw[L] != '_') --L;
+          int X = std::atoi(std::string(Raw.begin() + L + 1, Raw.begin() + R).c_str());
+          if (auto *DD = dyn_cast<DedicatedDFG>(DF.DFGs[i])) {
+            DD->UnrollFactor = X;
+          }
+          R = L--;
+        }
+      }
+      DSA_LOG(DSE) << "Use DSE: " << DF.getName();
+      DSA_LOG(PASS) << i << ": Injecting configuration...";
+      dsa::analysis::extractDFGPorts(DF, DAR.SI, false);
+      DSA_LOG(PASS) << i << ": Injecting configuration...";
+      dsa::xform::injectConfiguration(CGC, CI, Start, End);
+      DSA_LOG(PASS) << i << ": Injecting control intrinsics...";
+      dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
+      DSA_LOG(PASS) << i << ": Erasing offloaded instructions...";
+      eraseOffloadedInstructions(DF, CGC);
     }
-    DSA_LOG(PASS) << i << ": Scheduling DFG, and extracting port information...";
-    auto CI = dsa::analysis::extractDFGPorts(Name, DF, DAR.SI);
-    if (dsa::utils::ModuleContext().EXTRACT) {
-      continue;
+    GlobalSuccessSchedule = GlobalSuccessSchedule && LocalSuccessSchedule;
+    if (!GlobalSuccessSchedule) {
+      DSA_LOG(PASS) << "DFG " << i << " failed to schedule";
+      break;
     }
-    DSA_LOG(PASS) << i << ": Injecting configuration...";
-    dsa::xform::injectConfiguration(CGC, CI, Start, End);
-    DSA_LOG(PASS) << i << ": Injecting control intrinsics...";
-    dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
-    DSA_LOG(PASS) << i << ": Erasing offloaded instructions...";
-    eraseOffloadedInstructions(DF, CGC);
+    DSA_LOG(DSE) << "Best/Potential=" << DU.BestAt << "/" << DU.Cnt;
   }
 
   DSA_LOG(PASS) << "Done with transformation and rewriting!";
@@ -134,9 +172,11 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     return false;
   }
 
-  DSA_LOG(PASS) << "Done!";
+  DSA_CHECK(GlobalSuccessSchedule);
 
-  LLVM_DEBUG(llvm::errs() << "After transformation:\n"; F.dump());
+  DSA_LOG(PASS) << "Done! " << GlobalSuccessSchedule;
+
+  DSA_LOG(RES) << F;
 
   return false;
 }

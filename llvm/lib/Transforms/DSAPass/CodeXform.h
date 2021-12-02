@@ -53,6 +53,10 @@ struct CodeGenContext {
    */
   DominatorTree *DT;
   /*!
+   * \brief Block frequency.
+   */
+  BlockFrequencyInfo *BFI;
+  /*!
    * \brief Loop information.
    */
   LoopInfo *LI;
@@ -85,8 +89,8 @@ struct CodeGenContext {
   };
 
   CodeGenContext(IRBuilder<> *IB, const RegisterFile &Regs, ScalarEvolution &SE, SCEVExpander &SEE,
-                 DominatorTree *DT, LoopInfo *LI) :
-    IB(IB), Regs(Regs), SE(SE), SEE(SEE), DT(DT), LI(LI) {}
+                 DominatorTree *DT, LoopInfo *LI, BlockFrequencyInfo *BFI) :
+    IB(IB), Regs(Regs), SE(SE), SEE(SEE), DT(DT), BFI(BFI), LI(LI) {}
 
   /*!
    * \brief Inject load/store instructions so that the compiler can

@@ -3684,23 +3684,53 @@ void PragmaStreamSpecializeHandler::HandlePragma(Preprocessor &PP,
 
   auto *Str = Tok.getIdentifierInfo();
   Info->Type = Tok;
-  if (Str->isStr("config") || Str->isStr("stream")) {
+  if (Str->isStr("config")) {
     PP.Lex(Tok);
-
-    if (Str->isStr("stream")) {
-
-      if (Tok.is(tok::identifier)) {
-        auto *TII = Tok.getIdentifierInfo();
-        if (TII->isStr("barrier") || TII->isStr("nonblock")) {
-          Info->Args.push_back(std::make_pair(Tok, TokenVec({})));
+  } else if (Str->isStr("stream")) {
+    PP.Lex(Tok);
+    Token Barrier;
+    Barrier.startToken();
+    while (Tok.isNot(tok::eod)) {
+      assert(Tok.is(tok::identifier));
+      auto *TII = Tok.getIdentifierInfo();
+      if (TII->isStr("barrier") || TII->isStr("nonblock")) {
+        assert(Barrier.is(tok::unknown));
+        Barrier = Tok;
+        PP.Lex(Tok);
+      } else if (TII->isStr("fifo")) {
+        Token FKey = Tok;
+        PP.Lex(Tok);
+        assert(Tok.is(tok::l_paren));
+        TokenVec TV;
+        TV.push_back(Tok);
+        PP.Lex(Tok);
+        int ParenCnt = 1;
+        bool Comma = false;
+        while (ParenCnt != 0) {
+          ParenCnt += Tok.is(tok::l_paren);
+          ParenCnt -= Tok.is(tok::r_paren);
+          Comma |= Tok.is(tok::comma);
+          TV.push_back(Tok);
           PP.Lex(Tok);
-        } else {
-          PP.Diag(Tok.getLocation(), diag::err_expected)
-            << "'barrier'/'nonblock' identifier expected";
         }
+        assert(TV.back().is(tok::r_paren));
+        Info->Args.push_back(std::make_pair(FKey, TV));
+        if (!Comma) {
+          PP.Diag(Tok.getLocation(), diag::err_expected)
+            << "A comma(',') is expected, like: fifo(a, n)";
+        }
+      } else {
+        PP.Diag(Tok.getLocation(), diag::err_expected)
+          << "Expect barrier, nonblock or fifo";
+        assert(false);
       }
-
     }
+    if (Barrier.is(tok::unknown)) {
+      Barrier.setKind(tok::identifier);
+      Barrier.setIdentifierInfo(&PP.getIdentifierTable().get("barrier"));
+      Barrier.setLocation(Tok.getLocation());
+    }
+    Info->Args.push_back(std::make_pair(Barrier, TokenVec({})));
 
   } else if (Str->isStr("dfg")) {
 
@@ -3862,10 +3892,11 @@ bool Parser::HandlePragmaStreamSpecialize(SSHint &Hint) {
                                              Info->Type.getLocation(),
                                              Info->Type.getIdentifierInfo());
 
+  Token Eof;
+  Eof.startToken();
+  Eof.setKind(tok::eof);
+
   if (Info->Type.getIdentifierInfo()->isStr("dfg")) {
-    Token Eof;
-    Eof.startToken();
-    Eof.setKind(tok::eof);
 
     if (Info->OffloadTo.is(tok::unknown)) {
       Info->OffloadTo.setKind(tok::identifier);
@@ -3896,15 +3927,67 @@ bool Parser::HandlePragmaStreamSpecialize(SSHint &Hint) {
     }
   } else if (Info->Type.getIdentifierInfo()->isStr("stream")) {
 
-    if (Info->Args.empty()) {
-      Token SB;
-      SB.startToken();
-      SB.setIdentifierInfo(&PP.getIdentifierTable().get("barrier"));
-      SB.setLocation(Tok.getLocation());
-      Hint.Clauses.emplace_back(SB, nullptr);
-    } else {
-      assert(Info->Args.size() == 1);
-      Hint.Clauses.emplace_back(Info->Args[0].first, nullptr);
+    for (int i = 0; i < (int) Info->Args.size(); ++i) {
+      if (Info->Args[i].second.empty()) {
+        auto BarClause = Info->Args[i].first;
+        assert(BarClause.is(tok::identifier));
+        auto *II = BarClause.getIdentifierInfo();
+        if (II->isStr("barrier") || II->isStr("nonblock")) {
+          Hint.Clauses.emplace_back(BarClause, nullptr);
+        }
+      } else {
+        // fifo(a,n)
+        auto &TokenStream = Info->Args[i].second;
+        // strip '(' ')'
+        assert(TokenStream[0].is(tok::l_paren));
+        assert(TokenStream.back().is(tok::r_paren));
+        auto Key = Info->Args[i].first;
+
+        // extract tokens of 'a'
+        int j = 1, ParenCnt = 0;
+        SmallVector<Token, 0> ArrTokens;
+        while (j < (int) TokenStream.size() - 1) {
+          ParenCnt += TokenStream[j].is(tok::l_paren);
+          ParenCnt += TokenStream[j].is(tok::r_paren);
+          if (TokenStream[j].is(tok::comma) && ParenCnt == 0) {
+            break;
+          }
+          ArrTokens.push_back(TokenStream[j]);
+          ++j;
+        }
+        ArrTokens.push_back(Eof);
+        {
+          Token Ptr;
+          Ptr.startToken();
+          Ptr.setKind(tok::identifier);
+          auto KeyStr = Key.getIdentifierInfo()->getName().str() + ".array";
+          auto *II = &PP.getIdentifierTable().get(KeyStr);
+          Ptr.setIdentifierInfo(II);
+          Ptr.setLocation(Key.getLocation());
+          PP.EnterTokenStream(ArrTokens, false, false);
+          assert(Tok.is(tok::eof) || Tok.is(tok::annot_pragma_stream_specialize));
+          ConsumeAnyToken();
+          ExprResult AE = Actions.CorrectDelayedTyposInExpr(ParseAssignmentExpression());
+          Hint.Clauses.emplace_back(Ptr, AE.get());
+        }
+        {
+          // extract tokens of 'n'
+          Token Len;
+          Len.startToken();
+          Len.setKind(tok::identifier);
+          auto KeyStr = Key.getIdentifierInfo()->getName().str() + ".length";
+          auto *II = &PP.getIdentifierTable().get(KeyStr);
+          Len.setIdentifierInfo(II);
+          Len.setLocation(Key.getLocation());
+          SmallVector<Token, 0> NTokens(TokenStream.begin() + j + 1, TokenStream.end() - 1);
+          NTokens.push_back(Eof);
+          PP.EnterTokenStream(NTokens, false, false);
+          assert(Tok.is(tok::eof) || Tok.is(tok::annot_pragma_stream_specialize));
+          ConsumeAnyToken();
+          ExprResult NE = Actions.CorrectDelayedTyposInExpr(ParseAssignmentExpression());
+          Hint.Clauses.emplace_back(Len, NE.get());
+        }
+      }
     }
 
   } else if (Info->Type.getIdentifierInfo()->isStr("stream_name")) {

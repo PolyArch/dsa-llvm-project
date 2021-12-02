@@ -163,6 +163,7 @@ public:
 class DFGFile {
 
 public:
+  int ID;
   std::string FileName;
   Function &Func;
   Instruction *Config, *Fence;
@@ -191,8 +192,7 @@ public:
   friend struct AtomicPortMem;
 
   /// The constructor
-  DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End,
-          StreamSpecialize *Query);
+  DFGFile(IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query);
 
   /*!
    * \brief Get the name of the DFG.
@@ -246,6 +246,8 @@ public:
   static bool classof(const DFGBase *DB) { return DB->getKind() == Temporal; }
 };
 
+struct Accumulator;
+
 /// The class of the dedicated DFG
 class DedicatedDFG : public DFGBase {
 
@@ -273,6 +275,8 @@ public:
   BasicBlock *Preheader{nullptr};
   /// Prologue IP
   Instruction *PrologueIP;
+
+  bool GoTemporal{false};
 
   friend class DFGFile;
   friend class DFGBase;

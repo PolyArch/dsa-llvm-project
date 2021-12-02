@@ -459,20 +459,6 @@ MDNode *LoopInfo::createMetadata(
       Args.push_back(MDNode::get(Ctx, Vals));
     }
 
-    for (auto Elem : Attrs.DependClauses) {
-      auto Str = std::get<0>(Elem);
-      auto LB = std::get<1>(Elem);
-      auto UB = std::get<2>(Elem);
-      auto MDStr = MDString::get(Ctx, formatv("llvm.loop.ss.dfg.{0}", Str).str());
-      if (UB != nullptr) {
-        Metadata *Vals[] = { MDStr, ValueAsMetadata::get(LB), ValueAsMetadata::get(UB) };
-        Args.push_back(MDNode::get(Ctx, Vals));
-      } else {
-        Metadata *Vals[] = { MDStr, ValueAsMetadata::get(LB) };
-        Args.push_back(MDNode::get(Ctx, Vals));
-      }
-    }
-
     if (Args.size() > 1) {
       MDNode *LoopID = MDNode::getDistinct(Ctx, Args);
       LoopID->replaceOperandWith(0, LoopID);
@@ -493,8 +479,7 @@ LoopAttributes::LoopAttributes(bool IsParallel)
       InterleaveCount(0), UnrollCount(0), UnrollAndJamCount(0),
       DistributeEnable(LoopAttributes::Unspecified), PipelineDisabled(false),
       PipelineInitiationInterval(0),
-      SSDataStream(LoopAttributes::None), SSDfgDedicated(false), SSDataMove(false),
-      DependClauses() {}
+      SSDataStream(LoopAttributes::None), SSDfgDedicated(false), SSDataMove(false) {}
 
 void LoopAttributes::clear() {
   IsParallel = false;
@@ -513,7 +498,6 @@ void LoopAttributes::clear() {
   SSDataStream = LoopAttributes::None;
   SSDfgDedicated = false;
   SSDataMove = false;
-  DependClauses.clear();
 }
 
 LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
@@ -641,8 +625,7 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
                          const clang::CodeGenOptions &CGOpts,
                          ArrayRef<const clang::Attr *> Attrs,
                          const llvm::DebugLoc &StartLoc,
-                         const llvm::DebugLoc &EndLoc,
-                         const std::map<const clang::Attr *, std::pair<Value*, Value*>> &Emitted) {
+                         const llvm::DebugLoc &EndLoc) {
 
   // Identify loop hint attributes from Attrs.
   for (const auto *Attr : Attrs) {
@@ -828,37 +811,30 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
          StagedAttrs.UnrollCount == 0))
       setUnrollState(LoopAttributes::Disable);
 
-  for (auto Attr : Attrs) {
-    if (auto DA = dyn_cast<SSDfgAttr>(Attr)) {
-      auto VP = Emitted.find(Attr);
+  for (const auto *Attr : Attrs) {
+    if (const auto *DA = dyn_cast<SSDfgAttr>(Attr)) {
       switch(DA->getType()) {
-      case SSDfgAttr::Dedicated:
-      case SSDfgAttr::Temporal:
-        setSSDfgOffload();
-        break;
-      case SSDfgAttr::Datamove:
-        setSSDataMove();
-        break;
-      case SSDfgAttr::Unroll: {
-        auto Int = DA->getValue()->EvaluateKnownConstInt(Ctx);
-        setUnrollCount(Int.getZExtValue());
-        break;
+        case SSDfgAttr::Dedicated:
+        case SSDfgAttr::Temporal:
+          setSSDfgOffload();
+          break;
+        case SSDfgAttr::Datamove:
+          setSSDataMove();
+          break;
+        case SSDfgAttr::Unroll: {
+          auto Int = DA->getValue()->EvaluateKnownConstInt(Ctx);
+          setUnrollCount(Int.getZExtValue());
+          break;
+        }
+        default: {
+          assert(false && "Not supported yet!");
+          break;
+        }
       }
-      case SSDfgAttr::In:
-        assert(VP != Emitted.end());
-        pushSSDfgDepend("in", VP->second);
-        break;
-      case SSDfgAttr::Out:
-        assert(VP != Emitted.end());
-        pushSSDfgDepend("out", VP->second);
-        break;
-      case SSDfgAttr::InOut:
-        assert(VP != Emitted.end());
-        pushSSDfgDepend("out", VP->second);
-        break;
+    } else if (const auto *SL = dyn_cast<SSDataStreamAttr>(Attr)) {
+      if (SL->value().empty()) {
+        setSSStreamLevel(SL->getKey() == "barrier" ? LoopAttributes::Barrier : LoopAttributes::NonBlock);
       }
-    } else if (auto SL = dyn_cast<SSDataStreamAttr>(Attr)) {
-      setSSStreamLevel(SL->getBarrier() ? LoopAttributes::Barrier : LoopAttributes::NonBlock);
     }
   }
 
