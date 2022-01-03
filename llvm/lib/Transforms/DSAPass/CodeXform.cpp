@@ -310,28 +310,33 @@ struct DFGPrinter : dsa::DFGVisitor {
           OS << ", ctrl=" << P->name(-1) << "{" << CtrlBit.finalize() << "}";
         } else {
           struct TagNamer : DFGEntryVisitor {
+            std::string wrap(const std::string &S) {
+              return '$' + S + "State & " + ResetLevel;
+            }
             void Visit(SLPMemPort *SMP) {
               DSA_CHECK(Name.empty());
-              Name = formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID);
+              Name = wrap(formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID));
             }
             void Visit(MemPort *MP) {
               DSA_CHECK(Name.empty());
-              Name = MP->name(-1);
+              Name = wrap(MP->name(-1));
             }
             void Visit(IndMemPort *IMP) {
               DSA_CHECK(Name.empty());
-              Name = IMP->name(-1);
+              Name = dsa::utils::ModuleContext().IND ? wrap(IMP->name(-1)) : IMP->TagString;
             }
             std::string Name;
+            std::string ResetLevel;
           };
-          TagNamer TN;
           auto &Entry = Parent->DAR.AI[Acc];
           // TODO(@were): Confirm this is correct.
+          TagNamer TN;
           for (auto *IP : Acc->Parent->EntryFilter<InputPort>()) {
             auto Iter = std::find(IP->Tagged.begin(), IP->Tagged.end(), Acc);
             if (Iter != IP->Tagged.end()) {
+              TN.ResetLevel = std::to_string(tagBitmask(Entry.ResetLevel));
               IP->accept(&TN);
-              OS << ", ctrl=$" << TN.Name << "State & " << tagBitmask(Entry.ResetLevel) << "{";
+              OS << ", ctrl=" << TN.Name << "{";
             }
           }
           DSA_CHECK(!TN.Name.empty()) << Acc->dump() << " not tagged!";
@@ -404,12 +409,20 @@ struct DFGPrinter : dsa::DFGVisitor {
       if (IP->shouldUnroll()) {
         OS << "[" << IP->Parent->getUnroll() << "]";
       }
-      if (isa<MemPort>(IP) || isa<IndMemPort>(IP)) {
-        if (!IP->Tagged.empty()) {
+      bool Signaled = false;
+      if (!IP->Tagged.empty()) {
+        if (isa<MemPort>(IP) || (isa<IndMemPort>(IP) && dsa::utils::ModuleContext().IND)) {
           OS << " stated";
+          IP->TagString = '$' + IP->name() + "State";
+        } else if (isa<IndMemPort>(IP) && !IP->Tagged.empty()) {
+          Signaled = true;
         }
       }
       OS << "\n";
+      if (Signaled) {
+        OS << "Input: " << IP->name() << "_signal\n";
+        IP->TagString = IP->name() + "_signal";
+      }
     }
 
     void Visit(ComputeBody *CB) override {
@@ -644,39 +657,57 @@ struct DFGPrinter : dsa::DFGVisitor {
     //   Elem->EmitAtomic(os);
 
     // TODO(@were): Move this to a DFG.
-    for (auto *Elem : DB->EntryFilter<IndMemPort>()) {
-      auto *DS = analysis::extractStreamIntrinsics(Elem, CGC, DAR);
-      bool Penetrate = !Elem->Tagged.empty() && isa<Indirect1D>(DS);
-      OS << "\n\n----\n\n";
-      OS << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
-         << ": indirect_in_" << DB->ID << "_" << Elem->ID;
-      if (Penetrate) {
-        OS << " stated";
-      }
-      OS << "\n";
-      OS << "indirect_out_" << DB->ID << "_" << Elem->ID << " = "
-         << "indirect_in_" << DB->ID << "_" << Elem->ID << "\n";
-      OS << "Output" << Elem->Index->Load->getType()->getScalarSizeInBits()
-         << ": indirect_out_" << DB->ID << "_" << Elem->ID;
-      if (Penetrate) {
-        OS << " state=indirect_in_" << DB->ID << "_" << Elem->ID;
-      }
-      OS << "\n";
-      if (auto *S2D = dyn_cast<Indirect2D>(DS)) {
-        if (!isa<analysis::LoopInvariant>(S2D->L1D)) {
-          auto *DFG = new DedicatedDFG(DB->Parent, S2D->L1D);
-          DFG->UnrollFactor = 1;
-          S2D->L1DDFG = DFG;
-          auto *DD = dyn_cast<DedicatedDFG>(DB);
-          DSA_CHECK(DD);
-          DFG->LoopNest = DD->LoopNest;
-          DFG->LoopNest.erase(DFG->LoopNest.begin());
-          DB->Parent->DFGs.push_back(DFG);
-          DAR.DLI.push_back(DAR.DLI[Elem->Parent->ID]);
-          DAR.DLI.back().TripCount.erase(DAR.DLI.back().TripCount.begin());
-          DAR.DLI.back().LoopNest.erase(DAR.DLI.back().LoopNest.begin());
-          auto *SW = DAR.affineMemoryAccess(S2D->L1DDFG->Entries[0], CGC.SE, false);
-          (void) SW;
+    if (dsa::utils::ModuleContext().IND) {
+      for (auto *Elem : DB->EntryFilter<IndMemPort>()) {
+        auto *DS = analysis::extractStreamIntrinsics(Elem, CGC, DAR);
+        bool Penetrate = !Elem->Tagged.empty() && isa<Indirect1D>(DS);
+        OS << "\n\n----\n\n";
+        OS << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
+           << ": indirect_in_" << DB->ID << "_" << Elem->ID << "_";
+        bool Unrolled = false;
+        if (Elem->shouldUnroll()) {
+          Unrolled = true;
+          OS << "[" << Elem->Parent->getUnroll() << "]";
+        }
+        if (Penetrate) {
+          OS << " stated";
+        }
+        OS << "\n";
+        if (Unrolled) {
+          for (int i = 0; i < Elem->Parent->getUnroll(); ++i) { // NOLINT
+            OS << "indirect_out_" << DB->ID << "_" << Elem->ID << "_" << i << " = "
+               << "indirect_in_" << DB->ID << "_" << Elem->ID << "_" << i << "\n";
+          }
+        } else {
+          OS << "indirect_out_" << DB->ID << "_" << Elem->ID << "_" << " = "
+             << "indirect_in_" << DB->ID << "_" << Elem->ID << "_\n";
+        }
+        OS << "Output" << Elem->Index->Load->getType()->getScalarSizeInBits()
+           << ": indirect_out_" << DB->ID << "_" << Elem->ID << "_";
+        if (Elem->shouldUnroll()) {
+          Unrolled = true;
+          OS << "[" << Elem->Parent->getUnroll() << "]";
+        }
+        if (Penetrate) {
+          OS << " state=indirect_in_" << DB->ID << "_" << Elem->ID << "_";
+        }
+        OS << "\n";
+        if (auto *S2D = dyn_cast<Indirect2D>(DS)) {
+          if (!isa<analysis::LoopInvariant>(S2D->L1D)) {
+            auto *DFG = new DedicatedDFG(DB->Parent, S2D->L1D);
+            DFG->UnrollFactor = 1;
+            S2D->L1DDFG = DFG;
+            auto *DD = dyn_cast<DedicatedDFG>(DB);
+            DSA_CHECK(DD);
+            DFG->LoopNest = DD->LoopNest;
+            DFG->LoopNest.erase(DFG->LoopNest.begin());
+            DB->Parent->DFGs.push_back(DFG);
+            DAR.DLI.push_back(DAR.DLI[Elem->Parent->ID]);
+            DAR.DLI.back().TripCount.erase(DAR.DLI.back().TripCount.begin());
+            DAR.DLI.back().LoopNest.erase(DAR.DLI.back().LoopNest.begin());
+            auto *SW = DAR.affineMemoryAccess(S2D->L1DDFG->Entries[0], CGC.SE, false);
+            (void) SW;
+          }
         }
       }
     }
@@ -799,15 +830,15 @@ void CodeGenContext::intrinsicImpl(const std::string &Mnemonic,
   auto *FTy = FunctionType::get(ResTy, Types, false);
   auto *IA = InlineAsm::get(FTy, MOSS.str(), OpConstrain, true);
   Res.push_back(IB->CreateCall(IA, Args));
-  if (Mnemonic == "ss_lin_strm" || Mnemonic == "ss_ind_strm" ||
-      Mnemonic == "ss_recv" || Mnemonic == "ss_wr_rd") {
-    for (int i = 0; i < DSARF::TOTAL_REG; ++i) { // NOLINT
-      auto *C = IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
-      auto *SV = IB->CreateLoad(Regs[i].Reg);
-      auto *Reset = IB->CreateSelect(C, SV, IB->getInt64(REG_STICKY[i]));
-      IB->CreateStore(Reset, Regs[i].Reg);
-    }
-  }
+  // if (Mnemonic == "ss_lin_strm" || Mnemonic == "ss_ind_strm" ||
+  //     Mnemonic == "ss_recv" || Mnemonic == "ss_wr_rd") {
+  //   for (int i = 0; i < DSARF::TOTAL_REG; ++i) { // NOLINT
+  //     auto *C = IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
+  //     auto *SV = IB->CreateLoad(Regs[i].Reg);
+  //     auto *Reset = IB->CreateSelect(C, SV, IB->getInt64(REG_STICKY[i]));
+  //     IB->CreateStore(Reset, Regs[i].Reg);
+  //   }
+  // }
 }
 
 void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
@@ -848,11 +879,17 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
 std::pair<Value*, Value*>
 injectComputedRepeat(CodeGenContext &CGC, // NOLINT
                      std::vector<dsa::analysis::SEWrapper*> Loops, int N,
-                     int Unroll) {
+                     int Unroll, bool ConstRepeat) {
   auto *IB = CGC.IB;
   auto &SEE = CGC.SEE;
   Value *Repeat = IB->getInt64(1);
   Value *Stretch = nullptr;
+  auto FWrapUp = [&IB, ConstRepeat](Value *Val){
+    if (!ConstRepeat) {
+      Val = IB->CreateMul(Val, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
+    }
+    return Val;
+  };
 
   switch (N) {
   case 1: {
@@ -863,7 +900,13 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
       Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
     }
     auto *Dim0 = SEE.expandCodeFor(Base);
-    Repeat = CeilDiv(Dim0, IB->getInt64(Unroll), IB);
+    if (Stretch) {
+      Repeat = IB->CreateMul(Dim0, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
+      Repeat = IB->CreateSDiv(Repeat, IB->getInt64(Unroll));
+    } else {
+      Repeat = CeilDiv(Dim0, IB->getInt64(Unroll), IB);
+      Repeat = FWrapUp(Repeat);
+    }
     DSA_LOG(CODEGEN) << *Repeat;
     break;
   }
@@ -872,6 +915,7 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
     DSA_CHECK(Outer);
     auto *Dim1 = SEE.expandCodeFor(Outer->Raw);
     if (auto *LC = dyn_cast<analysis::LinearCombine>(Loops[0])) {
+      DSA_INFO << LC->toString();
       auto *Dim0 = SEE.expandCodeFor(LC->Base->Raw);
       if (Unroll == 1) {
         // (Dim0 + Dim0 + (Dim1 - 1) * Stretch) * Dim1 / 2
@@ -883,18 +927,36 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
         Repeat = IB->CreateSDiv(IB->CreateMul(Last, Dim0), IB->getInt64(2));
         Stretch = nullptr;
         DSA_INFO << "Stretched 2-D Repeat: " << *Repeat;
+        Repeat = FWrapUp(Repeat);
       } else if (Unroll == 2) {
-        DSA_CHECK(false) << "Support this later...";
+        auto *Dim1Add1 = IB->CreateAdd(Dim1, IB->getInt64(1));
+        auto *Dim1Sqr = IB->CreateMul(Dim1Add1, Dim1Add1);
+        Repeat = IB->CreateSDiv(Dim1Sqr, IB->getInt64(4));
+        Stretch = nullptr;
+        DSA_INFO << *Repeat;
+        DSA_INFO << *Dim1 << " " << LC->toString();
+        DSA_INFO << LC->Base->toString();
+        Repeat = FWrapUp(Repeat);
+        DSA_INFO << *Repeat;
       }
     } else {
       auto *Dim0 = SEE.expandCodeFor(Loops[0]->Raw);
       Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
       DSA_LOG(CODEGEN) << *Repeat;
+      Repeat = FWrapUp(Repeat);
     }
     break;
   }
-  default:
-    DSA_CHECK(N == 0) << "TODO: Support N == " << N << " later";
+  case 3:
+    auto *Dim0 = SEE.expandCodeFor(Loops[0]->Raw);
+    auto *Dim1 = SEE.expandCodeFor(Loops[1]->Raw);
+    auto *Dim2 = SEE.expandCodeFor(Loops[2]->Raw);
+    Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
+    Repeat = IB->CreateMul(Repeat, Dim2);
+    FWrapUp(Repeat);
+    Stretch = nullptr;
+    // DSA_CHECK(N == 0) << "TODO: Support N == " << N << " later";
+    break;
   }
   return {Repeat, Stretch};
 }
@@ -915,7 +977,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
     auto &Loops = LI.TripCount;
     DSA_CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
     int N = LI.Coef.empty() ? Loops.size() : LI.partialInvariant();
-    auto CR = injectComputedRepeat(CGC, Loops, N, Unroll);
+    auto CR = injectComputedRepeat(CGC, Loops, N, Unroll, false);
     auto *Repeat = CR.first;
     auto *Stretch = CR.second;
     if (auto *CI = dyn_cast<ConstantInt>(Repeat)) {
@@ -923,7 +985,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
         return;
       }
     }
-    CGC.SS_CONFIG_PORT(Port, DPF_PortRepeat, CGC.MUL(Repeat, 1 << DSA_REPEAT_DIGITAL_POINT));
+    CGC.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
     if (Stretch) {
       CGC.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, Stretch);
     }
@@ -971,7 +1033,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
       DSA_LOG(CODEGEN)
         << "[1-d Linear] Start: " << *Start << ", Stride: " << *Stride1D << ", N: " << *N1D
         << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
-        << (MO == DMO_Read ? ", Read" : ", Write");
+        << (MO == DMO_Read ? ", Read" : ", Write") << " Padding: " << P;
       break;
     }
     case 2: {
@@ -991,7 +1053,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
         << "[2-d Linear] Start: " << *Start << ", S1D: " << *Stride1D << ", N: " << *N1D
         << ", S2D: " << *Stride2D << ", Stretch: " << *Stretch << ", M: " << *N2D
         << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
-        << (MO == DMO_Read ? ", Read" : ", Write");
+        << (MO == DMO_Read ? ", Read" : ", Write") << " Padding: " << P;
       break;
     }
     case 3: {
@@ -1025,7 +1087,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
           << "[3-d Linear] Start: " << StartSpad << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
           << ", N2D: " << *N[1] << ", S2D: " << *Stride2D << ", N3D: " << *N[2]
           << ", Stride3D: " << *Stride3D << ", DType: " << DType
-          << ", Port: " << Port << " -> Read Buffet";
+          << ", Port: " << Port << " -> Read Buffet" << " Padding: " << P;
         CGC.SS_BUFFET_DEALLOC();
         DSA_LOG(CODEGEN) << "Deallocate Buffet!";
         break;
@@ -1038,7 +1100,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
         << ", N2D: " << *N[1] << ", S2D: " << *Stride2D << ", N3D: " << *N[2]
         << ", Stride3D: " << *Stride3D << ", DType: " << DType
         << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
-        << (MO == DMO_Read ? ", Read" : ", Write");
+        << (MO == DMO_Read ? ", Read" : ", Write") << " Padding: " << P;
       break;
     }
     default:
@@ -1174,10 +1236,34 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         return;
 
       auto *IB = CGC.IB;
+      auto &SEE = CGC.SEE;
 
       if (!dsa::utils::ModuleContext().IND) {
+        auto Inst = IB->GetInsertPoint();
+        IB->SetInsertPoint(IMP->Load->getNextNode());
         CGC.SS_CONST(IMP->SoftPortNum, IMP->Load, IB->getInt64(1),
                      IMP->Load->getType()->getScalarSizeInBits() / 8);
+        DSA_LOG(CODEGEN) << IMP->SoftPortNum << " <- " << *IMP->Load;
+        if (!IMP->Tagged.empty()) {
+          Value *Prod = IB->getInt64(1);
+          auto &Entry = DAR.AI[IMP->Tagged[0]];
+          auto &ALI = DAR.DLI[IMP->Parent->ID];
+          SEE.setInsertPoint(&ALI.LoopNest[Entry.ResetLevel]->getLoopPreheader()->back());
+          IB->SetInsertPoint(&ALI.LoopNest[Entry.ResetLevel]->getLoopPreheader()->back());
+          for (int i = 0; i <= Entry.ResetLevel; ++i) { // NOLINT
+            auto *TC = SEE.expandCodeFor(ALI.TripCount[i]->Raw);
+            Prod = IB->CreateMul(Prod, TC);
+            DSA_LOG(CODEGEN) << *TC;
+          }
+          auto *SignalVal = IB->getInt64(tagBitmask(Entry.ResetLevel));
+          Prod = IB->CreateSub(Prod, IB->getInt64(1));
+          DSA_LOG(CODEGEN) << IMP->SignalPort << " <- 0 x " << *Prod;
+          CGC.SS_CONST(IMP->SignalPort, IB->getInt64(0), Prod);
+          DSA_LOG(CODEGEN) << IMP->SignalPort << " <- " << *SignalVal << " x 1";
+          CGC.SS_CONST(IMP->SignalPort, SignalVal, IB->getInt64(1));
+          SEE.setInsertPoint(&*Inst);
+        }
+        IB->SetInsertPoint(&*Inst);
         IMP->IntrinInjected = true;
         IMP->Meta.set("src", "memory");
         IMP->Meta.set("cmd", "0.1");
@@ -1350,7 +1436,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
       }
       injectLinearStreamImpl(CGC, LC, Port, DFG->getUnroll(), DType, DMO_Read,
-                             (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin());
+                             (Padding) 0, SI, BIter - SI.Buffet.begin());
 
       SMP->IntrinInjected = true;
     }
@@ -1392,7 +1478,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           << *IC->Val << " is not a loop invariant under " << *LoopNest[i];
       }
       auto &TripCount = DAR.DLI[IC->Parent->ID].TripCount;
-      auto CR = injectComputedRepeat(CGC, TripCount, TripCount.size(), IC->Parent->getUnroll());
+      auto CR = injectComputedRepeat(CGC, TripCount, TripCount.size(), IC->Parent->getUnroll(), true);
       DSA_CHECK(!CR.second) << "Should not be stretched!";
       DSA_LOG(CODEGEN) << *IC->Val << " x " << *CR.first;
       CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first,
@@ -1488,8 +1574,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
             break;
           }
         }
-        auto Repeat = injectComputedRepeat(CGC, TripCount, i, DD->getUnroll());
-        CGC.SS_REPEAT_PORT(SIP->SoftPortNum, Repeat.first);
+        auto Repeat = injectComputedRepeat(CGC, TripCount, i, DD->getUnroll(), false);
+        CGC.SS_CONFIG_PORT(SIP->SoftPortNum, DPF_PortRepeat, Repeat.first);
         if (Repeat.second) {
           CGC.SS_CONFIG_PORT(SIP->SoftPortNum, DPF_PortRepeatStretch, Repeat.second);
         }

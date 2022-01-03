@@ -81,6 +81,10 @@ static cl::opt<unsigned> LoadElimSCEVCheckThreshold(
     cl::desc("The maximum number of SCEV checks allowed for Loop "
              "Load Elimination"));
 
+static cl::opt<unsigned> NoLLE(
+    "no-loop-load-elim", cl::Hidden, cl::desc("Disable LLE"),
+    cl::init(0));
+
 STATISTIC(NumLoopLoadEliminted, "Number of loads eliminated by LLE");
 
 namespace {
@@ -448,6 +452,9 @@ public:
   /// Top-level driver for each loop: find store->load forwarding
   /// candidates, add run-time checks and perform transformation.
   bool processLoop() {
+    if (NoLLE) {
+      return false;
+    }
     LLVM_DEBUG(dbgs() << "\nIn \"" << L->getHeader()->getParent()->getName()
                       << "\" checking " << *L << "\n");
 

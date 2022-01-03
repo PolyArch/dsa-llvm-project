@@ -343,8 +343,9 @@ bool MemPort::shouldUnroll() {
 bool IndMemPort::shouldUnroll() {
   if (!DFGEntry::shouldUnroll())
     return false;
-  if (auto *DD = dyn_cast<DedicatedDFG>(Parent))
+  if (auto *DD = dyn_cast<DedicatedDFG>(Parent)) {
     return !DD->InnerMost()->isLoopInvariant(Index->Load->getPointerOperand());
+  }
   return false;
 }
 

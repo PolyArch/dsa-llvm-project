@@ -4,7 +4,11 @@
 #include <map>
 #include <set>
 #include <string>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <tuple>
+
+#include "dsa/debug.h"
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -20,15 +24,57 @@ namespace dsa {
 namespace utils {
 
 /*!
+ */
+struct TimeProfiler {
+
+  /*!
+   * \brief The region of interests to be pranthesis closed.
+   */
+  std::vector<std::pair<uint64_t, std::vector<int>>> TimeStack;
+
+  struct Node {
+    int64_t TimeEllapsed;
+    std::vector<int> Child;
+  };
+
+  /*!
+   * \brief Time of each span ellapsed.
+   */
+  std::vector<Node> Buffer;
+
+  static uint64_t currentTime();
+
+  /*!
+   * \brief Enter an ROI.
+   */
+  void beginRoi();
+
+  /*!
+   * \brief Leave an ROI.
+   */
+  void endRoi();
+
+  /*!
+   * \brief Dump the time.
+   */
+  std::string toString();
+
+  void dfsImpl(int X, std::ostringstream &OSS);
+
+  ~TimeProfiler() { DSA_CHECK(TimeStack.empty()); }
+};
+
+/*!
  * \brief The compilation transformations enabled modularly.
  */
 struct ModuleFlags {
 
-#define DEFINE_FLAG(x, default_)                                               \
-  int64_t x{default_};                                                         \
-  void getFlag##x() {                                                          \
-    char *env = getenv(#x);                                                    \
-    if (env) x = std::stol(env);                                               \
+#define DEFINE_FLAG(x, default_)            \
+  int64_t x{default_};                      \
+  void getFlag##x() {                       \
+    char *env = getenv(#x);                 \
+    if (env) x = std::stol(env);            \
+    DSA_LOG(FLAG) << #x << " set to " << x; \
   }
   /*!
    * \brief Indirect memory access like a[b[i]].
@@ -69,10 +115,30 @@ struct ModuleFlags {
    */
   DEFINE_FLAG(BITSTREAM, 0)
   /*!
-   * \brief If ADG is old version
+   * \brief If ADG is old version.
    */
   DEFINE_FLAG(COMPAT_ADG, 1)
+  /*!
+   * \brief Perform transformation without O3 cleanup.
+   */
+  DEFINE_FLAG(RAW, 0)
+  /*!
+   * \brief Perform transformation without O3 cleanup.
+   */
+  DEFINE_FLAG(SEED, -1)
+  /*!
+   * \brief If we want to execute the peephole optimization over dsa register
+   * file instructions.
+   */
+  DEFINE_FLAG(FUSE_STREAM, 1)
+  /*!
+   * \brief If we want to execute the peephole optimization over dsa register
+   * file instructions.
+   */
+  DEFINE_FLAG(SLP_STREAM, 1)
 #undef DEFINE_FLAG
+
+  TimeProfiler TP;
 
   ModuleFlags() {
     getFlagIND();
@@ -85,6 +151,9 @@ struct ModuleFlags {
     getFlagDUMMY();
     getFlagBITSTREAM();
     getFlagCOMPAT_ADG();
+    getFlagRAW();
+    getFlagFUSE_STREAM();
+    getFlagSLP_STREAM();
   }
 };
 

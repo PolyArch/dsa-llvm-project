@@ -126,7 +126,7 @@ struct CodeGenContext {
   }
 
   void INTRINSIC_RRI(std::string Mnemonic, REG A, REG B, int C) { // NOLINT
-    injectFusionHints(Mnemonic, A, B, C);
+    // injectFusionHints(Mnemonic, A, B, C);
     intrinsicImpl(Mnemonic, "r,r,i",
                   {A.value(IB), B.value(IB), IB->getInt64(C)}, IB->getVoidTy());
   }

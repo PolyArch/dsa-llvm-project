@@ -12,6 +12,7 @@
 
 #include <queue>
 #include <set>
+#include <sys/select.h>
 
 #define DEBUG_TYPE "stream-specialize"
 
@@ -60,7 +61,7 @@ bool CanBeAEntry(Value *Val) {
   }
   if (auto *Call = dyn_cast<CallInst>(Inst)) {
     auto Name = Call->getCalledFunction()->getName();
-    return Name == "sqrt" || Name == "max64" || Name == "fsqrt";
+    return Name == "sqrt" || Name == "max64" || Name == "min64" || Name == "fsqrt";
   }
   if (isa<CmpInst>(Inst)) {
     for (auto *User : Inst->users()) {
@@ -199,6 +200,50 @@ std::vector<std::vector<int>> DSU2Sets(std::vector<int> &DSU) {
   return Res;
 }
 
+uint64_t TimeProfiler::currentTime() {
+  timeval TV;
+  gettimeofday(&TV, nullptr);
+  return TV.tv_sec * 1000000 + TV.tv_usec;
+}
+
+void TimeProfiler::beginRoi() {
+  TimeStack.emplace_back(currentTime(), std::vector<int>());
+}
+
+void TimeProfiler::endRoi() {
+  Buffer.emplace_back();
+  Buffer.back().TimeEllapsed = currentTime() - TimeStack.back().first;
+  Buffer.back().Child = TimeStack.back().second;
+  TimeStack.pop_back();
+  if (!TimeStack.empty()) {
+    TimeStack.back().second.push_back(Buffer.size() - 1);
+  }
+}
+
+void TimeProfiler::dfsImpl(int X, std::ostringstream &OSS) {
+  if (!Buffer[X].Child.empty()) {
+    OSS << "(" << Buffer[X].TimeEllapsed << ": ";
+    int First = true;
+    for (auto Elem : Buffer[X].Child) {
+      if (!First) {
+        OSS << ", ";
+      }
+      First = false;
+      dfsImpl(Elem, OSS);
+    }
+    OSS << ")";
+  } else {
+    OSS << Buffer[X].TimeEllapsed;
+  }
+}
+
+std::string TimeProfiler::toString() {
+  std::ostringstream OSS;
+  OSS << "Profiled Time: ";
+  DSA_CHECK(TimeStack.empty());
+  dfsImpl(Buffer.size() - 1, OSS);
+  return OSS.str();
+}
 
 } // namespace utils
 } // namespace dsa
@@ -278,3 +323,5 @@ void traverseAndApply(Instruction *Start, Instruction *Terminator, DominatorTree
     }
   }
 }
+
+

@@ -208,6 +208,10 @@ struct InputPort : PortBase {
    * \brief If this memory stream should be tagged.
    */
   std::vector<Accumulator *> Tagged;
+  /*!
+   * \brief The string of stream state.
+   */
+  std::string TagString;
 
   static bool classof(const DFGEntry *DE) {
     return DE->Kind > kInPortStarts && DE->Kind < kInPortEnds;
@@ -440,7 +444,10 @@ struct IndMemPort : InputPort {
    * \brief The output port that generates indices.
    *        Do differentiate it with Index->SoftPortNum, that is the input port that feeds indices in.
    */
-  int IndexOutPort{-1};
+  union {
+    int IndexOutPort{-1};
+    int SignalPort;
+  };
   LoadInst *Load;
 
   IndMemPort(DFGBase *Parent, LoadInst *Index, LoadInst *Load);
