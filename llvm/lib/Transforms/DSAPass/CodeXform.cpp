@@ -1177,9 +1177,11 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
             // TODO(@were): Support stretch later.
             auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0]->base());
             auto *OuterN = IB->CreateSub(CGC.SEE.expandCodeFor(LoopN[1]->base()), IB->getInt64(1));
-            CGC.SS_RECURRENCE(
-              PM->SoftPortNum, MP->SoftPortNum,
-              IB->CreateMul(InnerN, OuterN), DType);
+            auto *N = IB->CreateMul(InnerN, OuterN);
+            DSA_LOG(CODEGEN)
+              << PM->SoftPortNum << " -> " << MP->SoftPortNum
+              << ", DType: " << DType << " x N: " << *N;
+            CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, N, DType);
           } else {
             DSA_CHECK(false) << "Not supported yet";
           }
