@@ -1187,7 +1187,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           }
 
           injectLinearStreamImpl(
-            CGC, LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1);
+            CGC, LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
+            DP_PostStridePredOff, SI, -1);
 
           // Performance Model
           int II = 1;
@@ -1453,7 +1454,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
       auto *IdxLI = DAR.affineMemoryAccess(PM, CGC.SE, false);
       injectLinearStreamImpl(CGC, IdxLI, PM->SoftPortNum, DFG->getUnroll(), DType,
-                             DMO_Write, DP_NoPadding, SI, -1);
+                             DMO_Write, DP_PostStridePredOff, SI, -1);
 
       PM->IntrinInjected = true;
     }

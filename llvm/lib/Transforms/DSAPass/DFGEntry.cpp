@@ -386,7 +386,8 @@ int MemPort::fillMode() {
   if (auto *DD = dyn_cast<DedicatedDFG>(Parent)) {
     if (Parent->getUnroll() <= 1)
       return DP_NoPadding;
-    return DD->ConsumedByAccumulator(this) ? DP_PostStrideZero : DP_PostStridePredOff;
+    return DP_PostStrideZero;
+    // return DD->ConsumedByAccumulator(this) ? DP_PostStrideZero : DP_PostStridePredOff;
   }
   return DP_NoPadding;
 }
