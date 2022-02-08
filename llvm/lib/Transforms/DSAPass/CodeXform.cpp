@@ -1293,7 +1293,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
 
       DSA_CHECK(Together[0] == IMP);
       for (size_t i = 1; i < Together.size(); ++i) { // NOLINT
-        CGC.SS_CONFIG_PORT(INDs[i], DPF_PortBroadcast, true);
+        CGC.SS_CONFIG_PORT(INDs[i], DPF_PortBroadcast, INDs[0]);
       }
 
       int DType = IMP->Load->getType()->getScalarSizeInBits() / 8;
