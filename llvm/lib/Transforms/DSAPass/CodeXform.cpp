@@ -65,8 +65,8 @@ void Indirect2D::emitIntrinsic(xform::CodeGenContext &CGC) {
   auto *IB = CGC.IB;
   auto &SEE = CGC.SEE;
   CGC.CONFIG_PARAM(DSARF::L2D, SEE.expandCodeFor(L2D), false, DSARF::I1D, IB->getInt64(1), false);
-  CGC.SS_INDIRECT_2D_READ(DestPort, DType, OffsetPort, CGC.SEE.expandCodeFor(SAR->Raw), -1, IType,
-                          -1, CGC.SEE.expandCodeFor(L1D->Raw), IB->getInt64(0), DMT_DMA);
+  // CGC.SS_INDIRECT_2D_READ(DestPort, DType, OffsetPort, CGC.SEE.expandCodeFor(SAR->Raw), -1, IType,
+  //                         -1, CGC.SEE.expandCodeFor(L1D->Raw), IB->getInt64(0), DMT_DMA);
 }
 
 void eliminateTemporal(Function &F) {
@@ -1335,6 +1335,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         injectLinearStreamImpl(CGC, IndPtr->Pointer, IMP->Index->SoftPortNum,
                                IMP->Parent->getUnroll(), IType, DMO_Read, DP_NoPadding, SI, -1);
         int LengthPort = -1;
+        int LDType = 0;
         Value *N2D = nullptr;
         if (auto *DS = analysis::extractStreamIntrinsics(IMP, CGC, DAR)) {
           if (auto *I2D = dyn_cast<Indirect2D>(DS)) {
@@ -1346,6 +1347,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
               LengthPort = OP->SoftPortNum;
               DSA_LOG(CODEGEN) << "N1D from: " << LengthPort;
               N2D = IB->getInt64(0);
+              LDType = OP->underlyingValue()->getType()->getScalarSizeInBits() / 8;
             }
           }
         }
@@ -1356,11 +1358,23 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           << "[Indirect 2D] Port: " << IMP->SoftPortNum << ", DType: " << DType
           << ", SARPort: " << IMP->IndexOutPort << ", SAR: " << *SAR->Raw
           << ", IType: " << IType << ", InnerN: " << LC->TripCount[0]->toString();
-        CGC.CONFIG_PARAM(DSARF::L2D, CGC.SEE.expandCodeFor(SAR->TripCount[0]->Raw), false,
-                         DSARF::I1D, IB->getInt64(1), false);
-        CGC.SS_INDIRECT_2D_READ(IMP->SoftPortNum, DType, IMP->IndexOutPort,
-                                CGC.SEE.expandCodeFor(SAR->Raw), -1, IType, LengthPort, N2D,
-                                IB->getInt64(0), DMT_DMA);
+
+        CGC.CONFIG_PARAM(DSARF::I1D, IB->getInt64(1), false);
+        CodeGenContext::Indirect2DAttr I2A;
+        I2A.dest_port = IMP->SoftPortNum;
+        I2A.dtype = DType;
+        I2A.start = CGC.SEE.expandCodeFor(SAR->Raw);
+        I2A.start_port = IMP->IndexOutPort;
+        I2A.start_dtype = IType;
+        I2A.idx_port = -1;
+        I2A.idx_dtype = 0;
+        I2A.l1d_port = LengthPort;
+        I2A.l1d = N2D;
+        I2A.l1d_dtype = LDType;
+        I2A.l2d = CGC.SEE.expandCodeFor(SAR->TripCount[0]->Raw);
+        I2A.stretch = IB->getInt64(0);
+        I2A.memory = DMT_DMA;
+        CGC.SS_INDIRECT_2D_READ(&I2A);
         IMP->IntrinInjected = true;
         return;
       }
