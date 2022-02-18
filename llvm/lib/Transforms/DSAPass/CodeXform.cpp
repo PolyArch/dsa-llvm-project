@@ -915,7 +915,6 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
     DSA_CHECK(Outer);
     auto *Dim1 = SEE.expandCodeFor(Outer->Raw);
     if (auto *LC = dyn_cast<analysis::LinearCombine>(Loops[0])) {
-      DSA_INFO << LC->toString();
       auto *Dim0 = SEE.expandCodeFor(LC->Base->Raw);
       if (Unroll == 1) {
         // (Dim0 + Dim0 + (Dim1 - 1) * Stretch) * Dim1 / 2
@@ -926,24 +925,23 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
         auto *Last = IB->CreateAdd(Dim0x2, Delta);
         Repeat = IB->CreateSDiv(IB->CreateMul(Last, Dim0), IB->getInt64(2));
         Stretch = nullptr;
-        DSA_INFO << "Stretched 2-D Repeat: " << *Repeat;
         Repeat = FWrapUp(Repeat);
       } else if (Unroll == 2) {
         auto *Dim1Add1 = IB->CreateAdd(Dim1, IB->getInt64(1));
         auto *Dim1Sqr = IB->CreateMul(Dim1Add1, Dim1Add1);
         Repeat = IB->CreateSDiv(Dim1Sqr, IB->getInt64(4));
+        DSA_LOG(CODEGEN) << "Unroll by 2, stretched sum repeat: " << *Repeat;
         Stretch = nullptr;
-        DSA_INFO << *Repeat;
-        DSA_INFO << *Dim1 << " " << LC->toString();
-        DSA_INFO << LC->Base->toString();
         Repeat = FWrapUp(Repeat);
-        DSA_INFO << *Repeat;
+      } else {
+        DSA_CHECK(false);
       }
     } else {
       auto *Dim0 = SEE.expandCodeFor(Loops[0]->Raw);
       Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
-      DSA_LOG(CODEGEN) << *Repeat;
+      DSA_LOG(CODEGEN) << "2D Stretched Repeat: " << *Repeat;
       Repeat = FWrapUp(Repeat);
+      Stretch = nullptr;
     }
     break;
   }
@@ -977,6 +975,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
     auto &Loops = LI.TripCount;
     DSA_CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
     int N = LI.Coef.empty() ? Loops.size() : LI.partialInvariant();
+    DSA_LOG(CODEGEN) << "Inject repeat cutoff: " << N;
     auto CR = injectComputedRepeat(CGC, Loops, N, Unroll, false);
     auto *Repeat = CR.first;
     auto *Stretch = CR.second;

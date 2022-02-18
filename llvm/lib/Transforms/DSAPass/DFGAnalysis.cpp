@@ -1647,9 +1647,8 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
 }
 
 DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
-  if (dsa::utils::ModuleContext().COMPAT_ADG) {
-    dsa::ContextFlags::Global().adg_compat = true;
-  }
+  dsa::ContextFlags::Global().adg_compat = dsa::utils::ModuleContext().COMPAT_ADG;
+  DSA_INFO << dsa::ContextFlags::Global().adg_compat;
   auto *SBCONFIG = getenv("SBCONFIG");
   DSA_CHECK(SBCONFIG);
   SSModel Model(SBCONFIG);
