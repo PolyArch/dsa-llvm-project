@@ -914,6 +914,7 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
     auto *Outer = dyn_cast<analysis::LoopInvariant>(Loops[1]);
     DSA_CHECK(Outer);
     auto *Dim1 = SEE.expandCodeFor(Outer->Raw);
+    DSA_INFO << *Dim1;
     if (auto *LC = dyn_cast<analysis::LinearCombine>(Loops[0])) {
       auto *Dim0 = SEE.expandCodeFor(LC->Base->Raw);
       if (Unroll == 1) {
@@ -934,6 +935,7 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
         Stretch = nullptr;
         Repeat = FWrapUp(Repeat);
       } else {
+        DSA_INFO << "!!!!!!";
         DSA_CHECK(false);
       }
     } else {
@@ -1028,6 +1030,15 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
     case 1: {
       auto *N1D = N[0];
       auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
+      int ConstS1D = -1;
+      if (auto *CI = dyn_cast<ConstantInt>(Stride1D)) {
+        ConstS1D = CI->getSExtValue();
+      }
+      if (ConstS1D != 0 && ConstS1D != 1) {
+        CGC.INSTANTIATE_2D_STREAM(Start, IB->getInt64(1), IB->getInt64(1), Stride1D,
+                                  IB->getInt64(0), N1D, Port, P, DSA_Access, MO, MT, DType, 0);
+        break;
+      }
       CGC.INSTANTIATE_1D_STREAM(Start, Stride1D, N1D, Port, P, DSA_Access, MO, MT, DType, 0);
       DSA_LOG(CODEGEN)
         << "[1-d Linear] Start: " << *Start << ", Stride: " << *Stride1D << ", N: " << *N1D
@@ -1037,7 +1048,6 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
     }
     case 2: {
       auto *N1D = N[0];
-      auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
       // TODO(@were): Make assumption check!
       Value *Stretch = IB->getInt64(0);
       if (auto *LoopLC = dyn_cast<analysis::LinearCombine>(Loops[i])) {
@@ -1045,6 +1055,18 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
       }
       auto *N2D = N[1];
       auto *Stride2D = IB->CreateSDiv(Stride[1], IB->getInt64(DType));
+      auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
+      int ConstS1D = -1;
+      if (auto *CI = dyn_cast<ConstantInt>(Stride1D)) {
+        ConstS1D = CI->getSExtValue();
+      }
+      if (ConstS1D != 0 && ConstS1D != 1) {
+        CGC.INSTANTIATE_3D_STREAM(Start, IB->getInt64(1), IB->getInt64(1), Stride1D,
+                                  IB->getInt64(0), N1D, IB->getInt64(0), IB->getInt64(0),
+                                  IB->getInt64(0), Stretch, Stride2D, N2D, Port, P, DSA_Access,
+                                  MO, MT, DType, 0);
+        break;
+      }
       CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N1D, Stride2D, Stretch,
                                 N2D, Port, P, DSA_Access, MO, MT, DType,
                                 0);

@@ -1344,7 +1344,9 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                       if (DAR.AI[Acc].ResetLevel == -1) {
                         DAR.AI[Acc].ResetLevel = k - 1;
                       } else {
-                        DSA_CHECK(DAR.AI[Acc].ResetLevel == k - 1) << *Loops[k];
+                        DAR.AI[Acc].ResetLevel = std::min(k - 1, DAR.AI[Acc].ResetLevel);
+                        // DSA_CHECK(DAR.AI[Acc].ResetLevel == k - 1)
+                        //  << *Loops[k] << ", " << DAR.AI[Acc].ResetLevel << " != " << (k - 1);
                       }
                       break;
                     }
@@ -1648,7 +1650,6 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
 
 DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
   dsa::ContextFlags::Global().adg_compat = dsa::utils::ModuleContext().COMPAT_ADG;
-  DSA_INFO << dsa::ContextFlags::Global().adg_compat;
   auto *SBCONFIG = getenv("SBCONFIG");
   DSA_CHECK(SBCONFIG);
   SSModel Model(SBCONFIG);
