@@ -1334,7 +1334,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             if (auto *Phi = dyn_cast<PHINode>(Elem)) {
               for (int j = 0; j < (int) Phi->getNumOperands(); ++j) { // NOLINT
                 auto *Val = dyn_cast<Value>(Phi->getOperand(j));
-                if (Loops[0]->isLoopInvariant(Val) /*isa<ConstantData>(Val)*/) {
+                if (/*Loops[0]->isLoopInvariant(Val)*/ isa<ConstantData>(Val)) {
                   auto *BB = Phi->getIncomingBlock(j);
                   DSA_LOG(ACC)
                     << Acc->dump() << " reset by block " << BB->getName() << ", " << *Val;
@@ -1344,7 +1344,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                       if (DAR.AI[Acc].ResetLevel == -1) {
                         DAR.AI[Acc].ResetLevel = k - 1;
                       } else {
-                        DAR.AI[Acc].ResetLevel = std::min(k - 1, DAR.AI[Acc].ResetLevel);
+                        DAR.AI[Acc].ResetLevel = std::max(k - 1, DAR.AI[Acc].ResetLevel);
                         // DSA_CHECK(DAR.AI[Acc].ResetLevel == k - 1)
                         //  << *Loops[k] << ", " << DAR.AI[Acc].ResetLevel << " != " << (k - 1);
                       }

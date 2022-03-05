@@ -634,7 +634,9 @@ struct DFGPrinter : dsa::DFGVisitor {
   }
 
   void Visit(TemporalDFG *TD) override {
-    OS << "#pragma group temporal\n";
+    if (!utils::ModuleContext().TEMPORAL_FALLBACK) {
+      OS << "#pragma group temporal\n";
+    }
     DFGVisitor::Visit(TD);
   }
 
@@ -914,7 +916,6 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
     auto *Outer = dyn_cast<analysis::LoopInvariant>(Loops[1]);
     DSA_CHECK(Outer);
     auto *Dim1 = SEE.expandCodeFor(Outer->Raw);
-    DSA_INFO << *Dim1;
     if (auto *LC = dyn_cast<analysis::LinearCombine>(Loops[0])) {
       auto *Dim0 = SEE.expandCodeFor(LC->Base->Raw);
       if (Unroll == 1) {
@@ -928,15 +929,32 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
         Stretch = nullptr;
         Repeat = FWrapUp(Repeat);
       } else if (Unroll == 2) {
-        auto *Dim1Add1 = IB->CreateAdd(Dim1, IB->getInt64(1));
-        auto *Dim1Sqr = IB->CreateMul(Dim1Add1, Dim1Add1);
-        Repeat = IB->CreateSDiv(Dim1Sqr, IB->getInt64(4));
-        DSA_LOG(CODEGEN) << "Unroll by 2, stretched sum repeat: " << *Repeat;
+        auto FCalc = [IB](Value *N) {
+          auto *Add1 = IB->CreateAdd(N, IB->getInt64(1));
+          auto *SqrAdd1 = IB->CreateMul(Add1, Add1);
+          return IB->CreateSDiv(SqrAdd1, IB->getInt64(4));
+        };
+        Repeat = FCalc(Dim0);
+        auto *Delta = FCalc(IB->CreateSub(Dim0, Dim1));
+        Repeat = IB->CreateSub(Repeat, Delta);
+        DSA_LOG(CODEGEN) << "Unroll by 2, stretched sum repeat: "
+          << *Repeat << " for " << *Dim0 << ", " << *Dim1;
         Stretch = nullptr;
         Repeat = FWrapUp(Repeat);
       } else {
-        DSA_INFO << "!!!!!!";
-        DSA_CHECK(false);
+        DSA_CHECK(Unroll == 4) << Unroll << " not supported yet!";
+        auto FCalc = [IB](Value *N) {
+          auto *Add1 = IB->CreateAdd(N, IB->getInt64(2));
+          auto *SqrAdd1 = IB->CreateMul(Add1, Add1);
+          return IB->CreateSDiv(SqrAdd1, IB->getInt64(8));
+        };
+        Repeat = FCalc(Dim0);
+        auto *Delta = FCalc(IB->CreateSub(Dim0, Dim1));
+        Repeat = IB->CreateSub(Repeat, Delta);
+        DSA_LOG(CODEGEN) << "Unroll by 4, stretched sum repeat: "
+          << *Repeat << " for " << *Dim0 << ", " << *Dim1;
+        Stretch = nullptr;
+        Repeat = FWrapUp(Repeat);
       }
     } else {
       auto *Dim0 = SEE.expandCodeFor(Loops[0]->Raw);

@@ -89,9 +89,13 @@ struct ModuleFlags {
    */
   DEFINE_FLAG(PRED, 1)
   /*!
-   * \brief If we have temporal processing elements on the spatial architecture.
+   * \brief If no temporal regions, we just remove code regions to be offloaded to temporal.
    */
   DEFINE_FLAG(TEMPORAL, 1)
+  /*!
+   * \brief Do not remove temporal regions, but offload them to dedicated PE.
+   */
+  DEFINE_FLAG(TEMPORAL_FALLBACK, 0)
   /*!
    * \brief If we want to move all the processing elements on triggered PE (even
    * if they are not annotated with temporal).
@@ -145,6 +149,7 @@ struct ModuleFlags {
     getFlagREC();
     getFlagPRED();
     getFlagTEMPORAL();
+    getFlagTEMPORAL_FALLBACK();
     getFlagTRIGGER();
     getFlagEXTRACT();
     getFlagFUSION();
