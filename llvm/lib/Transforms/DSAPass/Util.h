@@ -140,6 +140,10 @@ struct ModuleFlags {
    * file instructions.
    */
   DEFINE_FLAG(SLP_STREAM, 1)
+  /*!
+   * \brief The most fine grainularity.
+   */
+  DEFINE_FLAG(GRANULARITY, -1)
 #undef DEFINE_FLAG
 
   TimeProfiler TP;
@@ -159,6 +163,7 @@ struct ModuleFlags {
     getFlagRAW();
     getFlagFUSE_STREAM();
     getFlagSLP_STREAM();
+    getFlagGRANULARITY();
   }
 };
 

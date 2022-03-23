@@ -54,6 +54,19 @@ Value *GetLoopTripCount(ScalarEvolution *SE, SCEVExpander *Expander, Loop *Loop,
   return TripCount;
 }
 
+const std::string IntrinsicCalls[] = {
+  "sqrt",
+  "fsqrt",
+  "min64",
+  "max64",
+  "min32",
+  "max32",
+  "min16",
+  "max16",
+  "min8",
+  "max8",
+};
+
 bool CanBeAEntry(Value *Val) {
   auto *Inst = dyn_cast<Instruction>(Val);
   if (!Inst) {
@@ -61,7 +74,13 @@ bool CanBeAEntry(Value *Val) {
   }
   if (auto *Call = dyn_cast<CallInst>(Inst)) {
     auto Name = Call->getCalledFunction()->getName();
-    return Name == "sqrt" || Name == "max64" || Name == "min64" || Name == "fsqrt";
+    int NumIntrinsics = (int) (sizeof(IntrinsicCalls) / sizeof(std::string));
+    DSA_INFO << NumIntrinsics;
+    for (int i = 0; i < NumIntrinsics; ++i) { // NOLINT
+      if (IntrinsicCalls[i] == Name.str()) {
+        return true;
+      }
+    }
   }
   if (isa<CmpInst>(Inst)) {
     for (auto *User : Inst->users()) {

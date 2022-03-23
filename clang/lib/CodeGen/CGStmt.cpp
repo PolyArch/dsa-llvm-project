@@ -1046,15 +1046,6 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
   if (S.getInit())
     EmitStmt(S.getInit());
 
-  // Start the loop with a block that tests the condition.
-  // If there's an increment, the continue scope will be overwritten
-  // later.
-  JumpDest Continue = getJumpDestInCurrentScope("for.cond");
-  llvm::BasicBlock *CondBlock = Continue.getBlock();
-  EmitBlock(CondBlock);
-
-  const SourceRange &R = S.getSourceRange();
-
   // A simple hack to support pre-emit non constants
   std::map<const Attr *, std::pair<llvm::Value *, llvm::Value *>> Emitted;
   for (const auto *Attr : ForAttrs) {
@@ -1074,18 +1065,31 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
       std::vector<llvm::Value*> Args;
       std::vector<Expr*> Raw(SSD->value().begin(), SSD->value().end());
       if (Raw.size() == 2) {
-        auto *Array = EmitScalarExpr(Raw[0]);
-        auto *Length = EmitScalarExpr(Raw[1]);
+        auto RArray = EmitLValue(Raw[0]);
+        auto RLength = EmitAnyExpr(Raw[1]);
+        auto *Array = RArray.getPointer(*this);
+        auto *Length = RLength.isScalar() ? RLength.getScalarVal() : RLength.getAggregatePointer();
         auto *Ptr = Builder.CreateBitCast(Array, Builder.getInt8PtrTy());
         Length = Builder.CreateIntCast(Length, Builder.getInt64Ty(), true);
         static auto *FI =
           llvm::Intrinsic::getDeclaration(&CGM.getModule(), llvm::Intrinsic::ss_fifo);
         auto *Call = Builder.CreateCall(FI, {Ptr, Length});
+        (void) Call;
       } else {
         assert(Raw.empty());
       }
     }
   }
+
+  // Start the loop with a block that tests the condition.
+  // If there's an increment, the continue scope will be overwritten
+  // later.
+  JumpDest Continue = getJumpDestInCurrentScope("for.cond");
+  llvm::BasicBlock *CondBlock = Continue.getBlock();
+  EmitBlock(CondBlock);
+
+  const SourceRange &R = S.getSourceRange();
+
 
   LoopStack.push(CondBlock, CGM.getContext(), CGM.getCodeGenOpts(), ForAttrs,
                  SourceLocToDebugLoc(R.getBegin()),

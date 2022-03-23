@@ -69,6 +69,14 @@ void Indirect2D::emitIntrinsic(xform::CodeGenContext &CGC) {
   //                         -1, CGC.SEE.expandCodeFor(L1D->Raw), IB->getInt64(0), DMT_DMA);
 }
 
+int getLanes(int DType) {
+   int Lanes = 1;
+   if (dsa::utils::ModuleContext().GRANULARITY != -1) {
+     Lanes = dsa::utils::ModuleContext().GRANULARITY / DType;
+   }
+   return Lanes;
+}
+
 void eliminateTemporal(Function &F) {
   std::vector<Instruction *> ToRemove;
   for (auto &BB : F) {
@@ -120,7 +128,7 @@ std::string ValueToOperandText(Value *Val) { // NOLINT
   return formatv("{0}", *RI);
 }
 
-std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated) {
+std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated, int Lanes) {
   std::string OpStr;
   int BitWidth = Inst->getType()->getScalarSizeInBits();
   auto *Ty = Inst->getType();
@@ -158,7 +166,14 @@ std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated) {
     OpStr[i] += 'A';
   }
 
-  return formatv("{0}_{1}{2}", OpStr, TyStr, BitWidth);
+  std::ostringstream SIMD;
+
+  if (Lanes != 1) {
+    SIMD << "x" << Lanes;
+  }
+
+
+  return formatv("{0}_{1}{2}{3}", OpStr, TyStr, BitWidth, SIMD.str());
 }
 
 /*!
@@ -267,9 +282,11 @@ struct DFGPrinter : dsa::DFGVisitor {
 
     void Visit(Accumulator *Acc) override {
 
-      Visit(cast<DFGEntry>(Acc));
       auto *Inst = Acc->Operation;
-      auto Reduce = getOperationStr(Inst, false, false);
+      int Lanes = getLanes(Inst->getType()->getScalarSizeInBits());
+
+      Visit(cast<DFGEntry>(Acc));
+      auto Reduce = getOperationStr(Inst, false, false, Lanes);
       ControlBit CtrlBit;
 
       std::queue<std::string> ReduceQ;
@@ -295,7 +312,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
 
       auto *P = Acc->getPredicate();
-      auto Op = getOperationStr(Inst, true, P != nullptr);
+      auto Op = getOperationStr(Inst, true, P != nullptr, Lanes);
 
       if (P) {
         OS << Acc->name() << " = " << Op << "(" << ReduceQ.front();
@@ -404,10 +421,17 @@ struct DFGPrinter : dsa::DFGVisitor {
         OS << "#pragma repeat=" << Meta.repeat << "\n";
       }
 
-      OS << "Input" << IP->underlyingInst()->getType()->getScalarSizeInBits()
-         << ": " << IP->name();
+      int Granularity = dsa::utils::ModuleContext().GRANULARITY;
+      int DType = IP->underlyingInst()->getType()->getScalarSizeInBits();
+      Granularity = Granularity == -1 ? DType : Granularity;
+      DSA_CHECK(Granularity % DType == 0);
+      int Bits = std::max((int) DType, Granularity);
+      int GranCoal = Bits / DType;
+      DSA_CHECK(IP->Parent->getUnroll() % GranCoal == 0);
+      int AdjustedLanes = IP->Parent->getUnroll() / GranCoal;
+      OS << "Input" << Bits << ": " << IP->name();
       if (IP->shouldUnroll()) {
-        OS << "[" << IP->Parent->getUnroll() << "]";
+        OS << "[" << AdjustedLanes << "]";
       }
       bool Signaled = false;
       if (!IP->Tagged.empty()) {
@@ -433,10 +457,11 @@ struct DFGPrinter : dsa::DFGVisitor {
 
       Visit(cast<DFGEntry>(CB));
 
+      int Lanes = getLanes(CB->underlyingInst()->getType()->getScalarSizeInBits());
       int Degree = (CB->shouldUnroll() ? CB->Parent->getUnroll() : 1);
-      for (int vec = 0; vec < Degree; ++vec) { // NOLINT
+      for (int vec = 0; vec * Lanes < Degree; ++vec) { // NOLINT
         OS << CB->name(vec) << " = "
-           << getOperationStr(CB->Operation, false, false) << "(";
+           << getOperationStr(CB->Operation, false, false, Lanes) << "(";
         ControlBit CtrlBit;
 
         bool FuncCall = isa<CallInst>(CB->Operation); // NOLINT
@@ -602,15 +627,23 @@ struct DFGPrinter : dsa::DFGVisitor {
       auto *Entry = OP->Parent->InThisDFG(OP->Output);
       DSA_CHECK(Entry);
       int N = (Entry->shouldUnroll() ? OP->Parent->getUnroll() : 1);
-      for (int i = 0; i < N; ++i) { // NOLINT
-        auto LHS = OP->name(i);
-        auto RHS = Entry->name(i);
+      int Granularity = dsa::utils::ModuleContext().GRANULARITY;
+      int DType = (int) OP->Output->getType()->getScalarSizeInBits();
+      Granularity = Granularity == -1 ? DType : Granularity;
+      DSA_CHECK(Granularity % DType == 0);
+      int Bits = std::max(DType, Granularity);
+      int GranCoal = Granularity / DType;
+      DSA_CHECK(OP->Parent->getUnroll() % GranCoal == 0);
+      int AdjustedLanes = OP->Parent->getUnroll() / GranCoal;
+      for (int i = 0; i < N; i += GranCoal) { // NOLINT
+        auto LHS = OP->name(i / GranCoal);
+        auto RHS = Entry->name(i / GranCoal);
         OS << LHS << " = " << RHS << "\n";
       }
-      OS << "Output" << OP->Output->getType()->getScalarSizeInBits() << ": "
-         << OP->name();
-      if (Entry->shouldUnroll())
-        OS << "[" << OP->Parent->getUnroll() << "]";
+      OS << "Output" << Bits << ": " << OP->name();
+      if (Entry->shouldUnroll()) {
+        OS << "[" << AdjustedLanes << "]";
+      }
       OS << "\n";
     }
 

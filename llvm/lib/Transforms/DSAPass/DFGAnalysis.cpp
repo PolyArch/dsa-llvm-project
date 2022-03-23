@@ -1762,7 +1762,11 @@ gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenCon
         if (auto *BCI = dyn_cast<BitCastInst>(Stripped)) {
           Stripped = BCI->getOperand(0);
         }
-        Res[SE.getSCEV(Stripped)] = SE.getSCEV(II->getOperand(1));
+        const auto *Ky = SE.getSCEV(Stripped);
+        const auto *V = SE.getSCEV(II->getOperand(1));
+        Res[Ky] = V;
+        DSA_INFO << *II;
+        DSA_INFO << *Ky << " " << *V;
         ToRemove.push_back(II);
       }
     }
