@@ -251,6 +251,10 @@ std::vector<Desired *> TypeFilter(const Iteratable &List) {
   return Res;
 }
 
+const std::map<std::string, std::string> &spatialIntrinics();
+
+std::string bitwiseRename(Instruction *Inst);
+
 bool CanBeAEntry(Value *Inst);
 
 bool isOne(Value *Val);

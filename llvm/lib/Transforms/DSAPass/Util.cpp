@@ -16,6 +16,25 @@
 
 #define DEBUG_TYPE "stream-specialize"
 
+
+std::string bitwiseRename(Instruction *Inst) {
+  std::string Res = Inst->getOpcodeName();
+  std::ostringstream OSS;
+  std::map<std::string, std::string> Kv = {
+    {"shl", "LShf"},
+    {"shr", "RShf"},
+    {"and", "And"},
+    {"or", "Or"},
+    {"sdiv", "Div"}
+  };
+  auto Iter = Kv.find(Res);
+  if (Iter != Kv.end()) {
+    OSS << Iter->second << "_U" << Inst->getType()->getScalarSizeInBits();
+    return OSS.str();
+  }
+  return std::string();
+}
+
 CallInst *createAssembleCall(Type *Ty, StringRef OpStr, StringRef Operand,
                              ArrayRef<Value *> Args, Instruction *Before) {
   SmallVector<Type *, 0> ArgTypes;
@@ -54,18 +73,26 @@ Value *GetLoopTripCount(ScalarEvolution *SE, SCEVExpander *Expander, Loop *Loop,
   return TripCount;
 }
 
-const std::string IntrinsicCalls[] = {
-  "sqrt",
-  "fsqrt",
-  "min64",
-  "max64",
-  "min32",
-  "max32",
-  "min16",
-  "max16",
-  "min8",
-  "max8",
+const std::map<std::string, std::string> IntrinsicCalls = {
+  {"sqrt", ""},
+  {"fsqrt", ""},
+  {"min64", ""},
+  {"max64", ""},
+  {"min32", ""},
+  {"max32", ""},
+  {"min16", ""},
+  {"max16", ""},
+  {"min8", ""},
+  {"max8", ""},
+  {"hladd64", "HLAdd_I64"},
+  {"hladd32x2", "HLAdd_I32x2"},
+  {"add16x4", "Add_I16x4"},
+  {"concat64", "Cat64"}
 };
+
+const std::map<std::string, std::string> &spatialIntrinics() {
+  return IntrinsicCalls;
+}
 
 bool CanBeAEntry(Value *Val) {
   auto *Inst = dyn_cast<Instruction>(Val);
@@ -74,12 +101,8 @@ bool CanBeAEntry(Value *Val) {
   }
   if (auto *Call = dyn_cast<CallInst>(Inst)) {
     auto Name = Call->getCalledFunction()->getName();
-    int NumIntrinsics = (int) (sizeof(IntrinsicCalls) / sizeof(std::string));
-    DSA_INFO << NumIntrinsics;
-    for (int i = 0; i < NumIntrinsics; ++i) { // NOLINT
-      if (IntrinsicCalls[i] == Name.str()) {
-        return true;
-      }
+    if (spatialIntrinics().find(Name.str()) != spatialIntrinics().end()) {
+      return true;
     }
   }
   if (isa<CmpInst>(Inst)) {

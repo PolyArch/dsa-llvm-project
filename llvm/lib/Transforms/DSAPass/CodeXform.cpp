@@ -130,6 +130,7 @@ std::string ValueToOperandText(Value *Val) { // NOLINT
 
 std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated, int Lanes) {
   std::string OpStr;
+
   int BitWidth = Inst->getType()->getScalarSizeInBits();
   auto *Ty = Inst->getType();
   std::string TyStr;
@@ -147,10 +148,18 @@ std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated, int La
     BitWidth = Cmp->getOperand(0)->getType()->getScalarSizeInBits();
   } else if (auto *Call = dyn_cast<CallInst>(Inst)) {
     OpStr = Call->getCalledFunction()->getName().str();
+    auto Iter = spatialIntrinics().find(OpStr);
+    if (Iter != spatialIntrinics().end() && !Iter->second.empty()) {
+      return Iter->second;
+    }
     while (isdigit(OpStr.back())) {
       OpStr.pop_back();
     }
   } else {
+    OpStr = bitwiseRename(Inst);
+    if (!OpStr.empty()) {
+      return OpStr;
+    }
     OpStr = Inst->getOpcodeName();
     if (Acc) {
       if (!Predicated) {
@@ -330,15 +339,15 @@ struct DFGPrinter : dsa::DFGVisitor {
             std::string wrap(const std::string &S) {
               return '$' + S + "State & " + ResetLevel;
             }
-            void Visit(SLPMemPort *SMP) {
+            void Visit(SLPMemPort *SMP) override {
               DSA_CHECK(Name.empty());
               Name = wrap(formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID));
             }
-            void Visit(MemPort *MP) {
+            void Visit(MemPort *MP) override {
               DSA_CHECK(Name.empty());
               Name = wrap(MP->name(-1));
             }
-            void Visit(IndMemPort *IMP) {
+            void Visit(IndMemPort *IMP) override {
               DSA_CHECK(Name.empty());
               Name = dsa::utils::ModuleContext().IND ? wrap(IMP->name(-1)) : IMP->TagString;
             }
