@@ -84,6 +84,7 @@ const std::map<std::string, std::string> IntrinsicCalls = {
   {"max16", ""},
   {"min8", ""},
   {"max8", ""},
+  {"div16", ""},
   {"hladd64", "HLAdd_I64"},
   {"hladd32x2", "HLAdd_I32x2"},
   {"add16x4", "Add_I16x4"},
