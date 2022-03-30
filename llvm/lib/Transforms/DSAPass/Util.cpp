@@ -25,7 +25,6 @@ std::string bitwiseRename(Instruction *Inst) {
     {"shr", "RShf"},
     {"and", "And"},
     {"or", "Or"},
-    {"sdiv", "Div"}
   };
   auto Iter = Kv.find(Res);
   if (Iter != Kv.end()) {

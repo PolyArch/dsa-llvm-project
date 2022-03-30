@@ -161,6 +161,9 @@ std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated, int La
       return OpStr;
     }
     OpStr = Inst->getOpcodeName();
+    if (OpStr == "sdiv") {
+      OpStr = "div";
+    }
     if (Acc) {
       if (!Predicated) {
         OpStr = OpStr[0] == 'f' ? "fadd" : "add";
@@ -383,8 +386,9 @@ struct DFGPrinter : dsa::DFGVisitor {
 
     void Visit(InputConst *IC) override {
       Visit(cast<DFGEntry>(IC));
-      OS << "Input" << IC->Val->getType()->getScalarSizeInBits() << ": "
-         << IC->name() << "\n";
+      int Granularity = dsa::utils::ModuleContext().GRANULARITY;
+      OS << "Input" << std::max((int) IC->Val->getType()->getScalarSizeInBits(), Granularity)
+         << ": " << IC->name() << "\n";
     }
 
     void Visit(IndMemPort *IMP) override {
@@ -1579,8 +1583,12 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto CR = injectComputedRepeat(CGC, TripCount, TripCount.size(), IC->Parent->getUnroll(), true);
       DSA_CHECK(!CR.second) << "Should not be stretched!";
       DSA_LOG(CODEGEN) << *IC->Val << " x " << *CR.first;
-      CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first,
-                   IC->Val->getType()->getScalarSizeInBits() / 8);
+      int Granularity = dsa::utils::ModuleContext().GRANULARITY;
+      int CType = IC->Val->getType()->getScalarSizeInBits();
+      // TODO(@were): Fix the broadcast!
+      if (CType != Granularity) {
+      }
+      CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first, std::max(Granularity, CType));
       IC->IntrinInjected = true;
     }
 
