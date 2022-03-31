@@ -1067,10 +1067,14 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
       if (Raw.size() == 2) {
         auto RArray = EmitLValue(Raw[0]);
         auto RLength = EmitAnyExpr(Raw[1]);
-        auto *Array = RArray.getPointer(*this);
+        llvm::Value *Array = RArray.getPointer(*this);
         auto *Length = RLength.isScalar() ? RLength.getScalarVal() : RLength.getAggregatePointer();
-        auto *Ptr = Builder.CreateBitCast(Array, Builder.getInt8PtrTy());
         Length = Builder.CreateIntCast(Length, Builder.getInt64Ty(), true);
+        if (!isa<llvm::GlobalValue>(Array)) {
+          Array = Builder.CreateLoad(RArray.getAddress(*this));
+        }
+        auto *Ptr = Builder.CreateBitCast(Array, Builder.getInt8PtrTy());
+        llvm::errs() << *Array << "\n";
         static auto *FI =
           llvm::Intrinsic::getDeclaration(&CGM.getModule(), llvm::Intrinsic::ss_fifo);
         auto *Call = Builder.CreateCall(FI, {Ptr, Length});

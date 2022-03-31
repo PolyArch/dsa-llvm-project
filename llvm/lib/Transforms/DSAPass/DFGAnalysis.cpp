@@ -1765,8 +1765,6 @@ gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenCon
         const auto *Ky = SE.getSCEV(Stripped);
         const auto *V = SE.getSCEV(II->getOperand(1));
         Res[Ky] = V;
-        DSA_INFO << *II;
-        DSA_INFO << *Ky << " " << *V;
         ToRemove.push_back(II);
       }
     }
