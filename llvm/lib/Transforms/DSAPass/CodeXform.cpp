@@ -1588,7 +1588,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       // TODO(@were): Fix the broadcast!
       if (CType != Granularity) {
       }
-      CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first, std::max(Granularity, CType));
+      CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first, std::max(Granularity, CType) / 8);
       IC->IntrinInjected = true;
     }
 
