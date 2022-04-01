@@ -1027,8 +1027,8 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
 
 
 void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
-                              int Port, int Unroll, int DType, MemoryOperation MO,
-                              Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
+                            int Port, int Unroll, int DType, MemoryOperation MO,
+                            Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
   analysis::LinearCombine *LCPtr = dyn_cast<analysis::LinearCombine>(SW);
   if (!LCPtr) {
     auto *LI = dyn_cast<analysis::LoopInvariant>(SW);
@@ -1037,7 +1037,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
   }
   analysis::LinearCombine &LC = *LCPtr;
 
-  auto InjectRepeat = [&CGC](analysis::LinearCombine &LI, int Port, int Unroll) {
+  auto InjectRepeat = [&CGC] (analysis::LinearCombine &LI, int Port, int Unroll) {
     auto &Loops = LI.TripCount;
     DSA_CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
     int N = LI.Coef.empty() ? Loops.size() : LI.partialInvariant();
@@ -1575,12 +1575,21 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
 
     void Visit(InputConst *IC) override {
       auto &LoopNest = DAR.DLI[IC->Parent->ID].LoopNest;
+
+
       for (int i = 0; i < (int) LoopNest.size(); ++i) { // NOLINT
         DSA_CHECK(LoopNest[i]->isLoopInvariant(IC->Val))
           << *IC->Val << " is not a loop invariant under " << *LoopNest[i];
       }
+      int CutOff = utils::consumerLevel(IC->Val, IC->Parent->Entries, LoopNest);
+
       auto &TripCount = DAR.DLI[IC->Parent->ID].TripCount;
-      auto CR = injectComputedRepeat(CGC, TripCount, TripCount.size(), IC->Parent->getUnroll(), true);
+      std::vector<analysis::SEWrapper*> Sliced(TripCount.begin() + CutOff, TripCount.end());
+      int Unroll = IC->Parent->getUnroll();
+      if (CutOff != 0) {
+        Unroll = 1;
+      }
+      auto CR = injectComputedRepeat(CGC, Sliced, Sliced.size(), Unroll, true);
       DSA_CHECK(!CR.second) << "Should not be stretched!";
       DSA_LOG(CODEGEN) << *IC->Val << " x " << *CR.first;
       int Granularity = dsa::utils::ModuleContext().GRANULARITY;

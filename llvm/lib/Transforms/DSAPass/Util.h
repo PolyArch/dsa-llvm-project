@@ -8,6 +8,7 @@
 #include <sys/time.h>
 #include <tuple>
 
+#include "DFGEntry.h"
 #include "dsa/debug.h"
 
 #include "llvm/Analysis/LoopInfo.h"
@@ -144,6 +145,10 @@ struct ModuleFlags {
    * \brief The most fine grainularity.
    */
   DEFINE_FLAG(GRANULARITY, -1)
+  /*!
+   * \brief If the computational fabric is backpressured.
+   */
+  DEFINE_FLAG(BACKCGRA, 1)
 #undef DEFINE_FLAG
 
   TimeProfiler TP;
@@ -164,6 +169,7 @@ struct ModuleFlags {
     getFlagFUSE_STREAM();
     getFlagSLP_STREAM();
     getFlagGRANULARITY();
+    getFlagBACKCGRA();
   }
 };
 
@@ -204,6 +210,14 @@ int DSUGetSet(int Elem, std::vector<int> &DSU);
  * \param DSU The DSU to convert.
  */
 std::vector<std::vector<int>> DSU2Sets(std::vector<int> &DSU);
+
+/*!
+ * \brief The loop level this input value is consumed.
+ * \param IP The input port.
+ * \param The loops.
+ */
+int consumerLevel(Value *Val, const std::vector<DFGEntry*> &Entries,
+                  const std::vector<Loop*> &Loops);
 
 } // namespace utils
 
@@ -264,6 +278,7 @@ void FindEquivPHIs(Instruction *, std::set<Instruction *> &);
 int PredicateToInt(ICmpInst::Predicate Pred, bool TF, bool Reverse);
 
 BasicBlock *FindLoopPrologue(Loop *L);
+
 
 /*!
  * \brief

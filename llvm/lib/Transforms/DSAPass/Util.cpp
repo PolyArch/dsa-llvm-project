@@ -16,7 +16,6 @@
 
 #define DEBUG_TYPE "stream-specialize"
 
-
 std::string bitwiseRename(Instruction *Inst) {
   std::string Res = Inst->getOpcodeName();
   std::ostringstream OSS;
@@ -223,6 +222,38 @@ bool isOne(Value *Val) {
 
 namespace dsa {
 namespace utils {
+
+int consumerLevel(Value *Val, const std::vector<DFGEntry*> &Entries,
+                  const std::vector<Loop*> &Loops) {
+  std::vector<Instruction*> Consumers;
+  for (auto *Entry : Entries) {
+    for (auto *Inst : Entry->underlyingInsts()) {
+      for (int i = 0; i < (int) Inst->getNumOperands(); ++i) { // NOLINT
+        if (Inst->getOperand(i) == Val) {
+          Consumers.push_back(Inst);
+        }
+      }
+    }
+  }
+  std::vector<int> Res;
+  Res.resize(Consumers.size(), -1);
+  DSA_CHECK(Consumers.size() == Res.size());
+  for (int i = 0; i < Consumers.size(); ++i) { // NOLINT
+    for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
+      if (Loops[j]->contains(Consumers[i])) {
+        Res[i] = j;
+        break;
+      }
+    }
+    DSA_CHECK(Res[i] != -1);
+  }
+  for (int i = 1; i < (int) Res.size(); ++i) { // NOLINT
+    if (Res[i] != Res[0]) {
+      return -1;
+    }
+  }
+  return Res[0];
+}
 
 ModuleFlags &ModuleContext() {
   static ModuleFlags Instance;

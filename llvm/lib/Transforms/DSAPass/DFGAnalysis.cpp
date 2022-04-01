@@ -1097,6 +1097,17 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
   struct AffineExtractor : DFGEntryVisitor {
     void Visit(MemPort *MP) override {
       analyze(MP->Load->getPointerOperand(), MP);
+      DSA_CHECK(SW);
+      auto &LoopNest = DAR.DLI[MP->Parent->ID].LoopNest;
+      if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+        for (int i = 0; i < (int) LoopNest.size(); ++i) { // NOLINT
+          if (LoopNest[i]->contains(MP->Load)) {
+            LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + i);
+            LC->TripCount.erase(LC->TripCount.begin(), LC->TripCount.begin() + i);
+            break;
+          }
+        }
+      }
     }
     void Visit(PortMem *PM) override {
       analyze(PM->Store->getPointerOperand(), PM);
