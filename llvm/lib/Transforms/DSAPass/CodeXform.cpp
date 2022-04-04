@@ -1581,7 +1581,10 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         DSA_CHECK(LoopNest[i]->isLoopInvariant(IC->Val))
           << *IC->Val << " is not a loop invariant under " << *LoopNest[i];
       }
-      int CutOff = utils::consumerLevel(IC->Val, IC->Parent->Entries, LoopNest);
+      int CutOff = 0;
+      if (isa<DedicatedDFG>(IC->Parent)) {
+        CutOff = utils::consumerLevel(IC->Val, IC->Parent->Entries, LoopNest);
+      }
 
       auto &TripCount = DAR.DLI[IC->Parent->ID].TripCount;
       std::vector<analysis::SEWrapper*> Sliced(TripCount.begin() + CutOff, TripCount.end());

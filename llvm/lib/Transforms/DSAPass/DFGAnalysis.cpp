@@ -1116,6 +1116,9 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
         auto PI = LC->partialInvariant();
         LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + PI);
         LC->TripCount.erase(LC->TripCount.begin(), LC->TripCount.begin() + PI);
+      } else if (auto *LI = dyn_cast<LoopInvariant>(SW)) {
+        LI->TripCount.clear();
+        LI->TripCount.push_back(LoopInvariant::get(PM, SE.getConstant(APInt(64, 1))));
       }
     }
     void Visit(IndMemPort *IMP) override {
@@ -1683,6 +1686,8 @@ DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
 }
 
 bool DFGUnroll::hasNext() {
+  DSA_INFO << Idx.size();
+  DSA_INFO << Degrees.size();
   return Idx.back() < (int) Degrees.back().size();
 }
 
