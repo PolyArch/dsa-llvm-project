@@ -1560,11 +1560,46 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
         int Delta = Before - Pattern->Coef.size();
         DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
         DSA_LOG(FUSE) << IP->dump();
-        for (auto *Acc : IP->Tagged) {
-          auto &Entry = AI[Acc];
-          Entry.ResetLevel -= Delta;
-          Entry.ProduceLevel -= Delta;
-          DSA_LOG(FUSE) << Acc->dump() << ": " << Entry.ResetLevel;
+        // Fix the accumulator signal associated with this port.
+        if (!IP->Tagged.empty()) {
+          for (auto *Acc : IP->Tagged) {
+            auto &Entry = AI[Acc];
+            Entry.ResetLevel -= Delta;
+            Entry.ProduceLevel -= Delta;
+            DSA_LOG(FUSE) << Acc->dump() << ": " << Entry.ResetLevel;
+          }
+        } else if (auto *SMP = dyn_cast<SLPMemPort>(IP)) {
+          std::ostringstream OSS;
+          SMP->dump(OSS);
+          DSA_INFO << OSS.str();
+          DSA_INFO << Pattern->toString();
+          // An peephole optimization for codegen.
+          if (Pattern->Coef.size() > 1 && SMP->Parent->getUnroll() == 1 /*Unroll not supported yet!*/) {
+            DSA_INFO << *Pattern->Coef[0]->Raw;
+            // Inner most dimension is not fused.
+            if (auto *CoefConst = dyn_cast<SCEVConstant>(Pattern->Coef[0]->Raw)) {
+              int DBytes = SMP->underlyingInsts()[0]->getType()->getScalarSizeInBits() / 8;
+              DSA_INFO << DBytes;
+              // The inner most dimension has the same stride as the data type.
+              if (CoefConst->getAPInt().getSExtValue() == DBytes) {
+                DSA_INFO << *Pattern->TripCount[0]->Raw;
+                if (auto *TripConst = dyn_cast<SCEVConstant>(Pattern->TripCount[0]->Raw)) {
+                  // The inner most dimension has the same lanes as the manual unrolling degree.
+                  if (TripConst->getAPInt().getSExtValue() == (int64_t) SMP->Coal.size()) {
+                    // Outer dimension is repeat.
+                    if (auto *CoefOuter = dyn_cast<SCEVConstant>(Pattern->Coef[1]->Raw)) {
+                      // Outer dimension coef is 0.
+                      if (CoefOuter->getAPInt().getSExtValue() == 0) {
+                        std::swap(Pattern->Coef[0], Pattern->Coef[1]);
+                        std::swap(Pattern->TripCount[0], Pattern->TripCount[1]);
+                        DSA_INFO << Pattern->toString();
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -1686,8 +1721,6 @@ DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
 }
 
 bool DFGUnroll::hasNext() {
-  DSA_INFO << Idx.size();
-  DSA_INFO << Degrees.size();
   return Idx.back() < (int) Degrees.back().size();
 }
 

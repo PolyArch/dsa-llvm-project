@@ -1200,6 +1200,150 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
   LinearInstantiation(&LC, Port, MO, P, SI, BuffetIdx, DType);
 }
 
+namespace unifier {
+
+Value *getPointer(MemPort *MP) {
+  return MP->Load->getPointerOperand();
+}
+
+Value *getPointer(PortMem *MP) {
+  return MP->Store->getPointerOperand();
+}
+
+Value *getPointer(SLPMemPort *SMP) {
+  return SMP->Coal[0]->Load->getPointerOperand();
+}
+
+Value *getPointer(SLPPortMem *SMP) {
+  return SMP->Coal[0]->Store->getPointerOperand();
+}
+
+int paddingStrategy(MemPort *MP) {
+  return MP->fillMode();
+}
+
+int paddingStrategy(SLPMemPort *MP) {
+  return 0;
+}
+
+std::string nameOf(MemPort *MP) {
+  return MP->name(-1);
+}
+
+std::string nameOf(SLPMemPort *SMP) {
+  return "ICluster";
+}
+
+
+template<typename RType, typename WType>
+void injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
+                  CodeGenContext &CGC, analysis::SpadInfo &SI) {
+  // No outer repeat
+  auto *DFG = MP->Parent;
+  if (!isa<DedicatedDFG>(DFG)) {
+    return;
+  }
+  if (DAR.DLI[DFG->ID].TripCount.size() <= 1) {
+    return;
+  }
+  auto *IB = CGC.IB;
+  for (auto *PM : DFG->template EntryFilter<WType>()) {
+    if (!PM->isInMajor() || PM->IntrinInjected)
+      continue;
+    auto *Ptr0 = dyn_cast<Instruction>(getPointer(MP));
+    auto *Ptr1 = dyn_cast<Instruction>(getPointer(PM));
+    auto DType = MP->underlyingInsts()[0]->getType()->getScalarSizeInBits() / 8;
+    if (Ptr0 == Ptr1) {
+      DSA_LOG(CODEGEN) << "Recurrencing: \n" << *MP->underlyingInsts()[0] << "\n" << *PM->underlyingInsts()[0];
+      auto *FLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
+      auto *LC = dyn_cast<analysis::LinearCombine>(FLI);
+      DSA_CHECK(LC);
+      LC = new analysis::LinearCombine(*LC);
+      auto LoopN = LC->TripCount;
+      // No repeat!
+      if (LC->partialInvariant() != 0) {
+        DSA_LOG(CODEGEN) << "Recurrence should not have inner repeat";
+        return;
+      }
+      if (LC->Coef.size() != 2) {
+        DSA_LOG(CODEGEN) << "Not a two dimension update and reduce";
+        return;
+      }
+      // Outer should not be stretched!
+      if (!isa<analysis::LoopInvariant>(LC->Coef.back())) {
+        DSA_LOG(CODEGEN) << "Recurrence should not be stretched";
+        return;
+      }
+      if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(LC->Coef[1]->base()))) {
+        if (O->getSExtValue()) {
+          DSA_LOG(CODEGEN) << "Not a repeated update!";
+          return;
+        }
+      }
+
+      LC->Coef.pop_back();
+      LC->TripCount.pop_back();
+
+      injectLinearStreamImpl(
+        CGC, LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
+        (Padding) paddingStrategy(MP), SI, -1);
+
+      if (LoopN.size() == 2) {
+        // TODO(@were): Support stretch later.
+        auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0]->base());
+        auto *OuterN = IB->CreateSub(CGC.SEE.expandCodeFor(LoopN[1]->base()), IB->getInt64(1));
+        auto *N = IB->CreateMul(InnerN, OuterN);
+        DSA_LOG(CODEGEN)
+          << PM->SoftPortNum << " -> " << MP->SoftPortNum
+          << ", DType: " << DType << " x N: " << *N;
+        CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, N, DType);
+      } else {
+        DSA_CHECK(false) << "Not supported yet";
+      }
+
+      injectLinearStreamImpl(
+        CGC, LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
+        DP_PostStridePredOff, SI, -1);
+
+      // Performance Model
+      int II = 1;
+      int Conc = -1;
+      if (auto *CI = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(LC->TripCount[0]->base()))) {
+        auto CII = CI->getZExtValue();
+        int CanHide = CII * DType;
+        if (PM->Latency - CanHide > 0) {
+          II = PM->Latency - CanHide;
+          DSA_INFO << "Recur II: " << II;
+        } else {
+          II = 1;
+          DSA_WARNING << "To hide the latency " << PM->Latency << ", "
+                      << CII * DType << " elements are active";
+          DSA_WARNING << "This requires a " << CanHide - PM->Latency
+                      << "-deep FIFO buffer";
+        }
+        Conc = CII;
+      } else {
+        errs() << "[Warning] To hide the latency " << PM->Latency
+               << ", make sure your variable recur distance will not overwhlem "
+                  "the FIFO buffer!";
+      }
+      PM->Meta.set("dest", "localport");
+      PM->Meta.set("dest", nameOf(MP));
+      if (Conc != -1) {
+        std::ostringstream OSS;
+        OSS << Conc * DType;
+        PM->Meta.set("conc", OSS.str());
+      }
+      DSA_INFO << MP << " update done...";
+      DSA_INFO << PM << " update done...";
+      PM->IntrinInjected = MP->IntrinInjected = true;
+      return;
+    }
+  }
+}
+
+} // namespace unifier
+
 
 void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnalysisResult &DAR) {
 
@@ -1208,106 +1352,11 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
   struct UpdateStreamInjector : DFGEntryVisitor {
 
     void Visit(MemPort *MP) override {
-      // No outer repeat
-      auto *DFG = MP->Parent;
-      if (!isa<DedicatedDFG>(DFG)) {
-        return;
-      }
-      if (DAR.DLI[DFG->ID].TripCount.size() <= 1) {
-        return;
-      }
-      auto *IB = CGC.IB;
-      for (auto *PM : DFG->EntryFilter<PortMem>()) {
-        if (!PM->isInMajor() || PM->IntrinInjected)
-          continue;
-        auto *Ptr0 = dyn_cast<Instruction>(MP->Load->getPointerOperand());
-        auto *Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
-        auto DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-        if (Ptr0 == Ptr1) {
-          DSA_LOG(CODEGEN) << "Recurrencing: \n" << *MP->Load << "\n" << *PM->Store;
-          auto *FLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
-          auto *LC = dyn_cast<analysis::LinearCombine>(FLI);
-          DSA_CHECK(LC);
-          LC = new analysis::LinearCombine(*LC);
-          auto LoopN = LC->TripCount;
-          // No repeat!
-          if (LC->partialInvariant() != 0) {
-            DSA_LOG(CODEGEN) << "Recurrence should not have inner repeat";
-            return;
-          }
-          if (LC->Coef.size() != 2) {
-            DSA_LOG(CODEGEN) << "Not a two dimension update and reduce";
-            return;
-          }
-          // Outer should not be stretched!
-          if (!isa<analysis::LoopInvariant>(LC->Coef.back())) {
-            DSA_LOG(CODEGEN) << "Recurrence should not be stretched";
-            return;
-          }
-          if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(LC->Coef[1]->base()))) {
-            if (O->getSExtValue()) {
-              DSA_LOG(CODEGEN) << "Not a repeated update!";
-              return;
-            }
-          }
+      unifier::injectUpdate<MemPort, PortMem>(MP, DAR, CGC, SI);
+    }
 
-          LC->Coef.pop_back();
-          LC->TripCount.pop_back();
-
-          injectLinearStreamImpl(
-            CGC, LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
-            (Padding) MP->fillMode(), SI, -1);
-
-          if (LoopN.size() == 2) {
-            // TODO(@were): Support stretch later.
-            auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0]->base());
-            auto *OuterN = IB->CreateSub(CGC.SEE.expandCodeFor(LoopN[1]->base()), IB->getInt64(1));
-            auto *N = IB->CreateMul(InnerN, OuterN);
-            DSA_LOG(CODEGEN)
-              << PM->SoftPortNum << " -> " << MP->SoftPortNum
-              << ", DType: " << DType << " x N: " << *N;
-            CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, N, DType);
-          } else {
-            DSA_CHECK(false) << "Not supported yet";
-          }
-
-          injectLinearStreamImpl(
-            CGC, LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
-            DP_PostStridePredOff, SI, -1);
-
-          // Performance Model
-          int II = 1;
-          int Conc = -1;
-          if (auto *CI = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(LC->TripCount[0]->base()))) {
-            auto CII = CI->getZExtValue();
-            int CanHide = CII * DType;
-            if (PM->Latency - CanHide > 0) {
-              II = PM->Latency - CanHide;
-              DSA_INFO << "Recur II: " << II;
-            } else {
-              II = 1;
-              DSA_WARNING << "To hide the latency " << PM->Latency << ", "
-                          << CII * DType << " elements are active";
-              DSA_WARNING << "This requires a " << CanHide - PM->Latency
-                          << "-deep FIFO buffer";
-            }
-            Conc = CII;
-          } else {
-            errs() << "[Warning] To hide the latency " << PM->Latency
-                   << ", make sure your variable recur distance will not overwhlem "
-                      "the FIFO buffer!";
-          }
-          PM->Meta.set("dest", "localport");
-          PM->Meta.set("dest", MP->name());
-          if (Conc != -1) {
-            std::ostringstream OSS;
-            OSS << Conc * DType;
-            PM->Meta.set("conc", OSS.str());
-          }
-          PM->IntrinInjected = MP->IntrinInjected = true;
-          return;
-        }
-      }
+    void Visit(SLPMemPort *SMP) override {
+      unifier::injectUpdate<SLPMemPort, SLPPortMem>(SMP, DAR, CGC, SI);
     }
 
     CodeGenContext &CGC;
@@ -1517,6 +1566,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
     }
 
     void Visit(SLPMemPort *SMP) override {
+      if (SMP->IntrinInjected)
+        return;
       auto *IB = CGC.IB;
       IB->SetInsertPoint(SMP->Parent->DefaultIP());
 
@@ -1544,10 +1595,9 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
     }
 
     void Visit(PortMem *PM) override {
-      auto *DFG = PM->Parent;
       if (PM->IntrinInjected)
         return;
-
+      auto *DFG = PM->Parent;
       CGC.IB->SetInsertPoint(DFG->DefaultIP());
       CGC.SEE.setInsertPoint(DFG->DefaultIP());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
@@ -1559,9 +1609,10 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
     }
 
     void Visit(SLPPortMem *SPM) override {
+      if (SPM->IntrinInjected)
+        return;
       auto *DFG = SPM->Parent;
       auto *PM = SPM->Coal[0];
-
       CGC.IB->SetInsertPoint(DFG->DefaultIP());
       CGC.SEE.setInsertPoint(DFG->DefaultIP());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
@@ -1569,7 +1620,6 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto *IdxLI = DAR.affineMemoryAccess(SPM, CGC.SE, false);
       injectLinearStreamImpl(CGC, IdxLI, SPM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
                              DP_NoPadding, SI, -1);
-
       SPM->IntrinInjected = true;
     }
 
