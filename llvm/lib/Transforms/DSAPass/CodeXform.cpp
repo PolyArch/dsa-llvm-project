@@ -116,6 +116,9 @@ std::vector<utils::StickyRegister> injectDSARegisterFile(Function &F) {
 }
 
 std::string ValueToOperandText(Value *Val) { // NOLINT
+  if (utils::ModuleContext().FAKE) {
+    return "$Reg0";
+  }
 
   if (auto *CI = dyn_cast<ConstantInt>(Val)) {
     return formatv("{0}", (uint64_t) CI->getValue().getSExtValue());
@@ -124,7 +127,7 @@ std::string ValueToOperandText(Value *Val) { // NOLINT
   DSA_CHECK(CFP) << "Cannot dump " << *Val;
   // TODO: Support more data types
   double FPV = CFP->getValueAPF().convertToDouble();
-  uint64_t *RI = reinterpret_cast<uint64_t *>(&FPV);
+  uint64_t *RI = reinterpret_cast<uint64_t*>(&FPV);
   return formatv("{0}", *RI);
 }
 

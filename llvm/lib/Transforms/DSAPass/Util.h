@@ -149,6 +149,10 @@ struct ModuleFlags {
    * \brief If the computational fabric is backpressured.
    */
   DEFINE_FLAG(BACKCGRA, 1)
+  /*!
+   * \brief If the computational fabric is backpressured.
+   */
+  DEFINE_FLAG(FAKE, 0)
 #undef DEFINE_FLAG
 
   TimeProfiler TP;
@@ -170,6 +174,7 @@ struct ModuleFlags {
     getFlagSLP_STREAM();
     getFlagGRANULARITY();
     getFlagBACKCGRA();
+    getFlagFAKE();
   }
 };
 
