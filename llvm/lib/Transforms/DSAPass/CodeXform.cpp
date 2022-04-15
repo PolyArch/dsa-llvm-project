@@ -787,7 +787,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       OS << "Output" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
       auto AN = useArrayHint(SPM, SPM->Coal[0]->Store->getPointerOperand(), Parent->DAR);
       if (!AN.empty()) {
-        OS << " destination=" << ExtraSrcDestInfo << " ";
+        OS << " destination=" << AN << " ";
         ExtraSrcDestInfo.clear();
       }
       OS << "\n";
