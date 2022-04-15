@@ -18,3 +18,8 @@ def int_ss_config_end   : Intrinsic<[],
 def int_ss_fifo : Intrinsic<[],
 			    [llvm_ptr_ty, llvm_i64_ty],
 			    []>;
+
+// Intrinsic marks the size of an ss-involved array
+def int_ss_array : Intrinsic<[],
+			     [llvm_ptr_ty, llvm_i64_ty],
+			     []>;

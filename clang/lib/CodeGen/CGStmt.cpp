@@ -1074,7 +1074,6 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
           Array = Builder.CreateLoad(RArray.getAddress(*this));
         }
         auto *Ptr = Builder.CreateBitCast(Array, Builder.getInt8PtrTy());
-        llvm::errs() << *Array << "\n";
         static auto *FI =
           llvm::Intrinsic::getDeclaration(&CGM.getModule(), llvm::Intrinsic::ss_fifo);
         auto *Call = Builder.CreateCall(FI, {Ptr, Length});

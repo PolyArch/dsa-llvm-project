@@ -100,6 +100,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     while (DU.hasNext()) {
       DU.next(true);
       dsa::analysis::DFGAnalysisResult &DAR = DU.DAR.back();
+      DSA_LOG(PASS) << i << ": Gather array size hints";
+      dsa::analysis::gatherArraySizeHints(DF, CGC, DAR);
       DAR.LinearOverride = LinearOverride;
       DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
       dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
@@ -168,6 +170,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (!GlobalSuccessSchedule) {
       DSA_LOG(PASS) << "DFG " << i << " failed to schedule";
       break;
+    }
+    for (auto &Elem : DU.DAR[0].ArraySize) {
+      Elem.second->eraseFromParent();
     }
     DSA_LOG(DSE) << "Best/Potential=" << DU.BestAt << "/" << DU.Cnt;
     if (!dsa::utils::ModuleContext().EXTRACT) {

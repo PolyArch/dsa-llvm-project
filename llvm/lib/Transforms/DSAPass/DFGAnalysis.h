@@ -306,6 +306,10 @@ struct DFGAnalysisResult {
    * \brief Data structures for streams that are ready-codegen.
    */
   std::unordered_map<DFGEntry*, xform::DataStream*> Streams;
+  /*!
+   * \brief The size of the given array pointer array.
+   */
+  std::unordered_map<Value *, llvm::CallInst*> ArraySize;
 
  private:
   /*!
@@ -413,6 +417,14 @@ std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
 gatherConfigScope(Function &F);
 
 /*!
+ * \brief Gather the array size hint intrinsics.
+ * \param DF The DFG file to be analyzed.
+ * \param CGC The LLVM context.
+ * \param DAR The analyzed results to put in.
+ */
+void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
+
+/*!
  * \brief
  */
 std::unordered_map<const SCEV*, const SCEV*>
@@ -476,6 +488,16 @@ void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult 
  */
 std::pair<std::set<Instruction *>, std::set<Instruction *>>
 bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT);
+
+
+/*!
+ * \brief Find The name of the array involved.
+ * \param Ptr The pointer expression to be analyzed.
+ * \param AS The DMA arrays declared.
+ * \param SI The SPM arrays declared.
+ */
+Value* findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallInst*> &AS,
+                         SpadInfo &SI);
 
 /*!
  * \brief Extract analyzed streams to ready-codegen format.

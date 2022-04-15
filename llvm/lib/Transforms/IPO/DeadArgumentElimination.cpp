@@ -723,6 +723,12 @@ bool DeadArgumentEliminationPass::RemoveDeadStuffFromFunction(Function *F) {
   if (LiveFunctions.count(F))
     return false;
 
+  if (F->hasFnAttribute(Attribute::OptimizeNone)) {
+    LLVM_DEBUG(dbgs() << "DeadArgumentEliminationPass - Skip "
+                      << F->getName() << " becasue of optnone\n");
+    return false;
+  }
+
   // Start by computing a new prototype for the function, which is the same as
   // the old function, but has fewer arguments and a different return type.
   FunctionType *FTy = F->getFunctionType();

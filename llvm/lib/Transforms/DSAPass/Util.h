@@ -153,6 +153,10 @@ struct ModuleFlags {
    * \brief If the computational fabric is backpressured.
    */
   DEFINE_FLAG(FAKE, 0)
+  /*!
+   * \brief If the computational fabric is backpressured.
+   */
+  DEFINE_FLAG(NOARRAY, 0)
 #undef DEFINE_FLAG
 
   TimeProfiler TP;
@@ -175,6 +179,7 @@ struct ModuleFlags {
     getFlagGRANULARITY();
     getFlagBACKCGRA();
     getFlagFAKE();
+    getFlagNOARRAY();
   }
 };
 
@@ -223,6 +228,12 @@ std::vector<std::vector<int>> DSU2Sets(std::vector<int> &DSU);
  */
 int consumerLevel(Value *Val, const std::vector<DFGEntry*> &Entries,
                   const std::vector<Loop*> &Loops);
+/*!
+ * \brief A wrapper for the array dumping.
+ * \param Func The function scope this array belongs to.
+ * \param Array The array to get the name.
+ */
+std::string nameOfLLVMValue(Function &Func, Value *Name);
 
 } // namespace utils
 

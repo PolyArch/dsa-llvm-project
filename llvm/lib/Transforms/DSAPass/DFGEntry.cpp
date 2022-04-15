@@ -128,6 +128,7 @@ std::string OutputPort::name(int VecIdx) {
 PortBase::PortBase(DFGBase *Parent_) // NOLINT
     : DFGEntry(Parent_), SoftPortNum(-1), IntrinInjected(false) {
   Kind = kPortBase;
+  Meta.clear();
 }
 
 OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) { // NOLINT
@@ -384,6 +385,7 @@ void DFGEntry::dump(std::ostringstream &OS) {
 
 int MemPort::fillMode() {
   if (auto *DD = dyn_cast<DedicatedDFG>(Parent)) {
+    (void) DD;
     if (Parent->getUnroll() <= 1)
       return DP_NoPadding;
     return DP_PostStrideZero;
