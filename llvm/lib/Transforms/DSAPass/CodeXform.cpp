@@ -764,6 +764,7 @@ struct DFGPrinter : dsa::DFGVisitor {
           ++Idx;
         }
       }
+      unifier::injectUpdate<SLPMemPort, SLPPortMem>(SMP, Parent->DAR, Parent->CGC, Parent->DAR.SI, true);
     }
 
     void Visit(SLPPortMem *SPM) override {
