@@ -961,8 +961,12 @@ struct DFGPrinter : dsa::DFGVisitor {
 
   void Visit(DFGBase *DB) override {
     // FIXME(@were): Add block freqency an attribute of DFG.
-    // auto BF = Parent->Query->BFI->getBlockFreq(getBlocks()[0]);
-    // os << "#pragma group frequency " << 1 << "\n";
+    int64_t Sum = 0;
+    for (auto *BB : DB->getBlocks()) {
+      auto BF = CGC.BFI->getBlockFreq(BB);
+      Sum += BF.getFrequency();
+    }
+    OS << "#pragma group frequency " << Sum << "\n";
     OS << "#pragma group unroll " << DB->getUnroll() << "\n";
 
     auto Reordered = ReorderEntries(DB);
