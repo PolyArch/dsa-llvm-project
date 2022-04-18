@@ -703,6 +703,21 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
       }
     }
   }
+
+    // for (auto &I : Range) {
+    //   if (auto *CI = dyn_cast<CallInst>(&I)) {
+    //     if (auto *CF = CI->getCalledFunction()) {
+    //       if (CF->getName() == "arrayhint") {
+    //         auto *BCI = dyn_cast<BitCastInst>(CI->getOperand(0));
+    //         DSA_CHECK(BCI) << *CI->getOperand(0);
+    //         DSA_CHECK(isa<ConstantInt>(CI->getOperand(1))) << *CI->getOperand(1);
+    //         DSA_CHECK(isa<ConstantFP>(CI->getOperand(2))) << *CI->getOperand(2);
+    //         DAR.ArraySize[BCI->getOperand(0)] = CI;
+    //       }
+    //     }
+    //   }
+    // }
+
   auto DFGs = DF.DFGFilter<DFGBase>();
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
@@ -1185,11 +1200,26 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
       auto &LoopNest = DAR.DLI[MP->Parent->ID].LoopNest;
       if (auto *LC = dyn_cast<LinearCombine>(SW)) {
         for (int i = 0; i < (int) LoopNest.size(); ++i) { // NOLINT
-          if (LoopNest[i]->contains(MP->Load)) {
-            LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + i);
-            LC->TripCount.erase(LC->TripCount.begin(), LC->TripCount.begin() + i);
-            break;
+          auto *CurLoop = LoopNest[i];
+          auto Uses = [CurLoop](LoadInst *Load) {
+            for (auto *BB : CurLoop->getBlocks()) {
+              for (auto &Inst : *BB) {
+                for (int j = 0; j < (int) Inst.getNumOperands(); ++j) { // NOLINT
+                  if (Inst.getOperand(j) == Load || &Inst == Load) {
+                    return true;
+                  }
+                }
+              }
+            }
+            return false;
+          };
+          if (!Uses(MP->Load)) {
+            DSA_INFO << *CurLoop << " does not use " << *MP->Load;
+            LC->Coef.erase(LC->Coef.begin());
+            LC->TripCount.erase(LC->TripCount.begin());
+            continue;
           }
+          break;
         }
       }
     }

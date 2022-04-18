@@ -744,10 +744,13 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
       int Bits = SMP->Coal[0]->underlyingInst()->getType()->getScalarSizeInBits();
       int Lanes = SMP->Coal.size();
+      auto AN = useArrayHint(SMP, SMP->Coal[0]->Load->getPointerOperand(), Parent->DAR);
       std::string Name = formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID);
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
+      if (!AN.empty()) {
+        OS << "#pragma reuse=" << SMP->Meta.reuse << "\n";
+      }
       OS << "Input" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
-      auto AN = useArrayHint(SMP, SMP->Coal[0]->Load->getPointerOperand(), Parent->DAR);
       if (!AN.empty()) {
         OS << " source=" << AN << " ";
         ExtraSrcDestInfo.clear();
@@ -784,9 +787,12 @@ struct DFGPrinter : dsa::DFGVisitor {
           ++Idx;
         }
       }
+      auto AN = useArrayHint(SPM, SPM->Coal[0]->Store->getPointerOperand(), Parent->DAR);
+      if (!AN.empty()) {
+        OS << "#pragma reuse=" << SPM->Meta.reuse << "\n";
+      }
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
       OS << "Output" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
-      auto AN = useArrayHint(SPM, SPM->Coal[0]->Store->getPointerOperand(), Parent->DAR);
       if (!AN.empty()) {
         OS << " destination=" << AN << " ";
         ExtraSrcDestInfo.clear();
