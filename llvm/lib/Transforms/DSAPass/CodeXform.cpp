@@ -790,6 +790,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       auto AN = useArrayHint(SPM, SPM->Coal[0]->Store->getPointerOperand(), Parent->DAR);
       if (!AN.empty()) {
         OS << "#pragma reuse=" << SPM->Meta.reuse << "\n";
+        OS << "#pragma conc=" << SPM->Meta.conc << "\n";
       }
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
       OS << "Output" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
