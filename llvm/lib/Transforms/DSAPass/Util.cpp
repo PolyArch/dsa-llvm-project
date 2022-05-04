@@ -77,6 +77,7 @@ const std::map<std::string, std::string> IntrinsicCalls = {
   {"fsqrt", ""},
   {"min64", ""},
   {"max64", ""},
+  {"fmax64", ""},
   {"min32", ""},
   {"max32", ""},
   {"min16", ""},

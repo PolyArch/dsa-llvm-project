@@ -1214,7 +1214,6 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
             return false;
           };
           if (!Uses(MP->Load)) {
-            DSA_INFO << *CurLoop << " does not use " << *MP->Load;
             LC->Coef.erase(LC->Coef.begin());
             LC->TripCount.erase(LC->TripCount.begin());
             continue;
@@ -1701,7 +1700,6 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
                       if (CoefOuter->getAPInt().getSExtValue() == 0) {
                         std::swap(Pattern->Coef[0], Pattern->Coef[1]);
                         std::swap(Pattern->TripCount[0], Pattern->TripCount[1]);
-                        DSA_INFO << Pattern->toString();
                       }
                     }
                   }
