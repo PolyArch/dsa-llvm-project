@@ -92,7 +92,11 @@ const std::map<std::string, std::string> IntrinsicCalls = {
   {"div16x4", "Div_I16x4"},
   {"concat64", "Concat_I64"},
   {"concat32", "Concat_I32"},
-  {"concat32x2", "Concat_I32x2"}
+  {"concat32x2", "Concat_I32x2"},
+  {"fmul32x2", "FMul_F32x2"},
+  {"fadd32x2", "FAdd_F32x2"},
+  {"fhladd64", "FHLAdd_F32x2"},
+  {"fhladd32x2", "FHLAdd_F32x2"},
 };
 
 const std::map<std::string, std::string> &spatialIntrinics() {

@@ -265,6 +265,7 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
                 auto *NewLoop = Loop.front()->Raw;
                 NewLoop = SE.getMulExpr(NewLoop, SCEVN);
                 Loop.front() = LoopInvariant::get(CoefParent, NewLoop);
+                Loop.front()->Parent = Loop[1]->Parent;
                 continue;
               }
             }

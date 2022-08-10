@@ -718,6 +718,9 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
     //   }
     // }
 
+  if (!utils::ModuleContext().DOUBLE_BUFFER) {
+    return;
+  }
   auto DFGs = DF.DFGFilter<DFGBase>();
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
@@ -725,46 +728,50 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
       void Visit(IndMemPort *) override {}
       void Visit(AtomicPortMem *) override {}
 
-      void Visit(MemPort *MP) override {
-        auto *IdxLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
+      void buffetImpl(LinearCombine *LC, Type *Ty, InputPort *IP) {
         std::vector<const SCEV*> N;
         std::vector<const SCEV*> Stride;
-        if (auto *LC = dyn_cast<LinearCombine>(IdxLI)) {
-          int PI = LC->partialInvariant();
-          auto &TripCnt = LC->TripCount;
-          for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
-            N.push_back(TripCnt[j]->Raw);
-            Stride.push_back(LC->Coef[j]->Raw);
-          }
-          if (LC->Coef.size() - PI == 3) {
-            if (auto *CIS2D = dyn_cast<SCEVConstant>(Stride[1])) {
-              if (auto *CIN1D = dyn_cast<SCEVConstant>(N[0])) {
-                if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
-                  if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
-                    int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-                    int BufferSize = (CIN1D->getAPInt().getSExtValue()) * 2 * DType * SLPMul;
-                    DSA_LOG(BUFFET)
-                      << SI.Buffet.size() << ": " << MP->dump() << ", "
-                      << (CIN1D->getAPInt().getSExtValue()) << " * " << SLPMul << " * " << DType
-                      << " * 2 = " << BufferSize << "\n" << LC->toString() << "\n"
-                      << SI.isSpad(MP->Load);
-                    // MP, Total, BufferSize, -1
-                    SI.Buffet.emplace_back(MP, SI.Total, BufferSize, -1, -1);
-                    SI.Total += BufferSize;
-                  }
+        int PI = LC->partialInvariant();
+        auto &TripCnt = LC->TripCount;
+        for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
+          N.push_back(TripCnt[j]->Raw);
+          Stride.push_back(LC->Coef[j]->Raw);
+        }
+        if (LC->Coef.size() - PI == 3) {
+          if (auto *CIS2D = dyn_cast<SCEVConstant>(Stride[1])) {
+            if (auto *CIN1D = dyn_cast<SCEVConstant>(N[0])) {
+              if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
+                if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
+                  int DType = Ty->getScalarSizeInBits() / 8;
+                  int BufferSize = (CIN1D->getAPInt().getSExtValue()) * 2 * DType;
+                  DSA_LOG(BUFFET)
+                    << SI.Buffet.size() << ": " << LC->toString() << ", "
+                    << (CIN1D->getAPInt().getSExtValue()) << " * " << DType
+                    << " * 2 = " << BufferSize << "\n" << LC->toString() << "\n";
+                  // MP, Total, BufferSize, -1
+                  SI.Buffet.emplace_back(IP, SI.Total, BufferSize, -1, -1);
+                  SI.Total += BufferSize;
                 }
               }
             }
           }
         }
-        SLPMul = 1;
+      }
+
+      void Visit(MemPort *MP) override {
+        auto *IdxLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
+        if (auto *LC = dyn_cast<LinearCombine>(IdxLI)) {
+          buffetImpl(LC, MP->Load->getType(), MP);
+        }
       }
 
       void Visit(SLPMemPort *SMP) override {
-        SLPMul = SMP->Coal.size();
+        auto *IdxLI = DAR.affineMemoryAccess(SMP, CGC.SE, false);
+        if (auto *LC = dyn_cast<LinearCombine>(IdxLI)) {
+          buffetImpl(LC, SMP->Coal[0]->Load->getType(), SMP);
+        }
       }
 
-      int SLPMul{1};
       int Unroll;
       DFGAnalysisResult &DAR;
       SpadInfo &SI;
@@ -1109,6 +1116,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
           auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
           DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest[i],
                                                              LoopSlice, DLI.TripCount, LinearOverride));
+          DLI.TripCount.back()->Parent.L = LoopNest[i];
           DSA_LOG(AFFINE) << i << ": " << DLI.TripCount.back()->toString();
         }
       }
@@ -1293,10 +1301,9 @@ void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution
               continue;
             }
             int DBits = PtrA->getType()->getPointerElementType()->getScalarSizeInBits();
-            DSA_LOG(SLP) << i << " " << j << ": " << Offset;
+            DSA_LOG(SLP) << *PtrA << " - " << *PtrB << ": " << Offset;
             if (Offset == DBits / 8) {
-              DSA_LOG(SLP) << *PtrA;
-              DSA_LOG(SLP) << *PtrB;
+              DSA_LOG(SLP) << "Coalesce!";
               if (utils::DSUGetSet(i, DSU) != utils::DSUGetSet(j, DSU)) {
                 DSU[utils::DSUGetSet(i, DSU)] = DSU[utils::DSUGetSet(j, DSU)];
                 Iterative = true;

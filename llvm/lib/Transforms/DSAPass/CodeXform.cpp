@@ -274,6 +274,7 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
       DSA_LOG(CODEGEN) << "Recurrencing: \n" << *MP->underlyingInsts()[0] << "\n" << *PM->underlyingInsts()[0];
       auto *FLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
       auto *LC = dyn_cast<analysis::LinearCombine>(FLI);
+      DSA_INFO << LC->toString();
       DSA_CHECK(LC);
       LC = new analysis::LinearCombine(*LC);
       auto LoopN = LC->TripCount;
@@ -1397,7 +1398,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
     }
     auto &Loops = LC->TripCount;
     int Dim = Loops.size() - LC->partialInvariant();
-    DSA_CHECK(0 <= Dim && Dim <= 3) << Dim;
+    // DSA_CHECK(0 <= Dim && Dim <= 3) << LC->toString();
     // if (const auto *LII = LI.invariant()) {
     //   CGC.INSTANTIATE_1D_STREAM(SEE.expandCodeFor(LII), IB->getInt64(0),
     //                             IB->getInt64(1), Port, P, DSA_Access, MO, MT,
@@ -1407,7 +1408,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
     int i = LC->partialInvariant(); // NOLINT
     std::vector<Value*> N;
     std::vector<Value*> Stride;
-    for (int j = i; j < (int) Loops.size(); ++j) { // NOLINT
+    for (int j = i, k = 0; j < (int) Loops.size() && k < 3; ++j, ++k) { // NOLINT
       N.push_back(SEE.expandCodeFor(Loops[j]->base()));
       Stride.push_back(SEE.expandCodeFor(LC->Coef[j]->base()));
     }
@@ -1467,7 +1468,14 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
         << (MO == DMO_Read ? ", Read" : ", Write") << " Padding: " << P;
       break;
     }
-    case 3: {
+    default: {
+      auto OldIP = CGC.IB->GetInsertPoint();
+      if (Dim > 3) {
+        DSA_WARNING << LC->toString() << " more than 3 dims.";
+        DSA_WARNING << LC->TripCount[i + 2]->Parent.L;
+        DSA_WARNING << "Fall back to inner loop: " << *LC->TripCount[i + 2]->Parent.L;
+        CGC.IB->SetInsertPoint(&LC->TripCount[i + 2]->Parent.L->getLoopPreheader()->back());
+      }
       // TODO(@were): Support 3D stretch!
       auto *Zero = IB->getInt64(0);
       auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
@@ -1513,9 +1521,8 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
         << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
         << (MO == DMO_Read ? ", Read" : ", Write") << " Padding: " << P;
       break;
+      CGC.IB->SetInsertPoint(&*OldIP);
     }
-    default:
-      DSA_CHECK(false) << "Unsupported dimension: " << Dim;
     }
   };
 

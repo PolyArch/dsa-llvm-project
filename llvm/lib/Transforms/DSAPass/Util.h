@@ -157,6 +157,10 @@ struct ModuleFlags {
    * \brief If the computational fabric is backpressured.
    */
   DEFINE_FLAG(NOARRAY, 0)
+  /*!
+   * \brief If apply buffet double buffering.
+   */
+  DEFINE_FLAG(DOUBLE_BUFFER, 1)
 #undef DEFINE_FLAG
 
   TimeProfiler TP;
@@ -180,6 +184,7 @@ struct ModuleFlags {
     getFlagBACKCGRA();
     getFlagFAKE();
     getFlagNOARRAY();
+    getFlagDOUBLE_BUFFER();
   }
 };
 

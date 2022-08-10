@@ -232,7 +232,7 @@ struct SpadInfo {
   std::map<AllocaInst*, int> Offset;
 
   // [Linear Read Stream, Address Offset, Buffer Size, Load Port, Store Port]
-  using BuffetEntry = std::tuple<MemPort*, int, int, int, int>;
+  using BuffetEntry = std::tuple<InputPort*, int, int, int, int>;
   /*! \brief Buffet The information of buffet double buffering. */
   std::vector<BuffetEntry> Buffet;
   /*! \brief The total bytes occupied on SPAD. */
