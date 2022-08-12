@@ -59,6 +59,12 @@ void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnaly
             DSA_CHECK(isa<ConstantInt>(CI->getOperand(1))) << *CI->getOperand(1);
             DSA_CHECK(isa<ConstantFP>(CI->getOperand(2))) << *CI->getOperand(2);
             DAR.ArraySize[BCI->getOperand(0)] = CI;
+          } else if (CF->getName() == "spadoverride") {
+            auto *BCI = dyn_cast<BitCastInst>(CI->getOperand(0));
+            auto *Const = dyn_cast<ConstantInt>(CI->getOperand(1));
+            DSA_CHECK(Const) << *CI->getOperand(1);
+            auto *Alloc = dyn_cast<AllocaInst>(BCI->getOperand(0));
+            DAR.SI.Offset[Alloc] = Const->getSExtValue();
           }
         }
       }
@@ -697,6 +703,8 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
               Offset[Alloc] = Total;
               DSA_LOG(SPAD) << *Alloc << ": " << Total;
               Total += Size;
+            } else {
+              DSA_LOG(SPAD) << *Alloc << " already assigned to " << Offset[Alloc];
             }
           }
         }
@@ -1026,10 +1034,10 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
         DSA_CHECK(sscanf(Token.c_str(), "_%d_", &X));
         if (IsInput) {
           Iss >> std::get<3>(SI.Buffet[X]);
-          DSA_INFO << "Buffet Read Port: " << std::get<3>(SI.Buffet[X]);
+          DSA_LOG(BUFFET) << "Buffet Read Port: " << std::get<3>(SI.Buffet[X]);
         } else {
           Iss >> std::get<4>(SI.Buffet[X]);
-          DSA_INFO << "Buffet Write Port: " << std::get<4>(SI.Buffet[X]);
+          DSA_LOG(BUFFET) << "Buffet Write Port: " << std::get<4>(SI.Buffet[X]);
         }
       } else if (Token.find(L2DPrefix)) {
         DSA_CHECK(false) << "Support this: " << Token;
@@ -1649,6 +1657,20 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
       DBits = MP->Load->getType()->getScalarSizeInBits();
       CutOff = cutoffLevel(SMP, DAR);
       SLP = true;
+
+      if (const auto *LI0 = dyn_cast<LoopInvariant>(LC->TripCount[0])) {
+        if (auto *PortWidth = LI0->constInt()) {
+          DSA_CHECK(*PortWidth == SMP->Coal.size()); // Port is this wide.
+          if (const auto *LI1 = dyn_cast<LoopInvariant>(LC->Coef[1])) {
+            if (auto *Stride = LI1->constInt()) {
+              if (*Stride == 0) { // Outer stride is 0, which is a repeat.
+                std::swap(LC->Coef[0], LC->Coef[1]);
+                std::swap(LC->TripCount[0], LC->TripCount[1]);
+              }
+            }
+          }
+        }
+      }
     }
     void Visit(SLPPortMem *SPM) override {
       auto *PM = SPM->Coal[0];
@@ -1660,11 +1682,12 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
     int CutOff{-1};
     bool SLP{false};
     DFGAnalysisResult &DAR;
-    FuseInfoExtractor(DFGAnalysisResult &DAR) : DAR(DAR) {}
+    LinearCombine *LC;
+    FuseInfoExtractor(DFGAnalysisResult &DAR, LinearCombine *LC) : DAR(DAR), LC(LC) {}
   };
   for (auto &Elem : AffineInfoCache) {
     if (auto *Pattern = dyn_cast<LinearCombine>(Elem.second)) {
-      FuseInfoExtractor FIE(*this);
+      FuseInfoExtractor FIE(*this, Pattern);
       Elem.first->accept(&FIE);
       if (FIE.CutOff == -1) {
         FIE.CutOff = Pattern->TripCount.size() - 1;

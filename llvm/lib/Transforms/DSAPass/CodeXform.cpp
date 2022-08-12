@@ -283,16 +283,14 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
         DSA_LOG(CODEGEN) << "Recurrence should not have inner repeat";
         return nullptr;
       }
-      if (LC->Coef.size() != 2) {
-        DSA_LOG(CODEGEN) << "Not a two dimension update and reduce";
-        return nullptr;
-      }
+
       // Outer should not be stretched!
       if (!isa<analysis::LoopInvariant>(LC->Coef.back())) {
         DSA_LOG(CODEGEN) << "Recurrence should not be stretched";
         return nullptr;
       }
-      if (auto *O = dyn_cast<SCEVConstant>(LC->Coef[1]->base())) {
+
+      if (auto *O = dyn_cast<SCEVConstant>(LC->Coef.back()->base())) {
         if (O->getAPInt().getSExtValue()) {
           DSA_LOG(CODEGEN) << "Not a repeated update!";
           return nullptr;
@@ -339,18 +337,18 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
         CGC, LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
         (Padding) paddingStrategy(MP), SI, -1);
 
-      if (LoopN.size() == 2) {
-        // TODO(@were): Support stretch later.
-        auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0]->base());
-        auto *OuterN = IB->CreateSub(CGC.SEE.expandCodeFor(LoopN[1]->base()), IB->getInt64(1));
-        auto *N = IB->CreateMul(InnerN, OuterN);
-        DSA_LOG(CODEGEN)
-          << PM->SoftPortNum << " -> " << MP->SoftPortNum
-          << ", DType: " << DType << " x N: " << *N;
-        CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, N, DType);
-      } else {
-        DSA_CHECK(false) << "Not supported yet";
+      // TODO(@were): Support stretch later.
+      auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0]->base());
+      for (int k = 1; k < (int) LoopN.size() - 1; ++k) { // NOLINT
+        InnerN = IB->CreateMul(InnerN, CGC.SEE.expandCodeFor(LoopN[k]->base()));
       }
+
+      auto *OuterN = IB->CreateSub(CGC.SEE.expandCodeFor(LoopN.back()->base()), IB->getInt64(1));
+      auto *N = IB->CreateMul(InnerN, OuterN);
+      DSA_LOG(CODEGEN)
+        << PM->SoftPortNum << " -> " << MP->SoftPortNum
+        << ", DType: " << DType << " x N: " << *OuterN << " * " << *InnerN;
+      CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, N, DType);
 
       injectLinearStreamImpl(
         CGC, LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
@@ -1383,7 +1381,8 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
     }
   };
 
-  auto LinearInstantiation = [&CGC](analysis::LinearCombine *LC, int Port,
+  auto LinearInstantiation = [&CGC, InjectRepeat, Unroll](
+                                    analysis::LinearCombine *LC, int Port,
                                     MemoryOperation MO, Padding P, analysis::SpadInfo &SI,
                                     int BuffetIdx, int DType) {
     DSA_LOG(CODEGEN) << LC->toString();
@@ -1472,7 +1471,6 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
       auto OldIP = CGC.IB->GetInsertPoint();
       if (Dim > 3) {
         DSA_WARNING << LC->toString() << " more than 3 dims.";
-        DSA_WARNING << LC->TripCount[i + 2]->Parent.L;
         DSA_WARNING << "Fall back to inner loop: " << *LC->TripCount[i + 2]->Parent.L;
         CGC.IB->SetInsertPoint(&LC->TripCount[i + 2]->Parent.L->getLoopPreheader()->back());
       }
@@ -1499,6 +1497,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
           << ", S2D: " << *Stride2D << ", N2D: " << *N[2] << ", Stride2D: " << *Stride3D
           << ", DType: " << DType << ", Port: " << Port << " -> Write Buffet";
         CGC.SS_BUFFET_ALLOC(StartSpad, StartSpad + BufferSize);
+        InjectRepeat(*LC, Port, Unroll);
         CGC.INSTANTIATE_3D_STREAM(StartSpad, Stride1D, N[0], Stride2D, Zero, N[1],
                                   Zero, Zero, Zero, Zero, Stride3D, N[2],
                                   Port, P, DSA_Access, MO, DMT_SPAD, DType, 0);
@@ -1526,7 +1525,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
     }
   };
 
-  if (MO == MemoryOperation::DMO_Read) {
+  if (MO == MemoryOperation::DMO_Read && (BuffetIdx < 0 || BuffetIdx >= (int) SI.Buffet.size())) {
     InjectRepeat(LC, Port, Unroll);
   }
 
@@ -1768,7 +1767,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         DSA_CHECK(false) << "Predicated stream should be handled in CtrlMemPort.";
       }
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-      auto Cond = [MP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP; };
+      auto Cond = [SMP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == SMP; };
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
       DSA_CHECK(SMP->Coal.size() >= 2);
       auto *IdxLI = DAR.affineMemoryAccess(SMP, CGC.SE, false);
