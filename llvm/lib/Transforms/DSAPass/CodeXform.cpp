@@ -274,8 +274,8 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
       DSA_LOG(CODEGEN) << "Recurrencing: \n" << *MP->underlyingInsts()[0] << "\n" << *PM->underlyingInsts()[0];
       auto *FLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
       auto *LC = dyn_cast<analysis::LinearCombine>(FLI);
+      DSA_CHECK(LC) << *Ptr0 << " is NOT a linear combination!";
       DSA_INFO << LC->toString();
-      DSA_CHECK(LC);
       LC = new analysis::LinearCombine(*LC);
       auto LoopN = LC->TripCount;
       // No repeat!
@@ -1411,6 +1411,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
       N.push_back(SEE.expandCodeFor(Loops[j]->base()));
       Stride.push_back(SEE.expandCodeFor(LC->Coef[j]->base()));
     }
+    DSA_LOG(CODEGEN) << "In total " << Dim << " dims";
     switch (Dim) {
     case 0: {
       CGC.INSTANTIATE_1D_STREAM(Start, IB->getInt64(0), IB->getInt64(1), Port,

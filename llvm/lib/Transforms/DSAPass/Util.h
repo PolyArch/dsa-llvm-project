@@ -183,6 +183,7 @@ struct ModuleFlags {
     getFlagGRANULARITY();
     getFlagBACKCGRA();
     getFlagFAKE();
+    getFlagSEED();
     getFlagNOARRAY();
     getFlagDOUBLE_BUFFER();
   }

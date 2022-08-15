@@ -95,8 +95,9 @@ const std::map<std::string, std::string> IntrinsicCalls = {
   {"concat32x2", "Concat_I32x2"},
   {"fmul32x2", "FMul_F32x2"},
   {"fadd32x2", "FAdd_F32x2"},
-  {"fhladd64", "FHLAdd_F32x2"},
-  {"fhladd32x2", "FHLAdd_F32x2"},
+  {"fsub32x2", "FSub_F32x2"},
+  {"fhladd64", "FAdd_F32x2"}, // TODO(@Sihao): Implement these two FU later!
+  {"fhladd32x2", "FAdd_F32x2"},
 };
 
 const std::map<std::string, std::string> &spatialIntrinics() {
