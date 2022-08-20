@@ -1840,6 +1840,7 @@ DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
   DSA_CHECK(SBCONFIG);
   SSModel Model(SBCONFIG);
   auto *BFI = CGC.BFI;
+  DSA_INFO << DF.DFGs.size();
   for (auto *Elem : DF.DFGs) {
     Idx.push_back(0);
     Freq.push_back(0);
@@ -1858,6 +1859,7 @@ DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
 }
 
 bool DFGUnroll::hasNext() {
+  DSA_CHECK(!Idx.empty());
   return Idx.back() < (int) Degrees.back().size();
 }
 

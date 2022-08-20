@@ -2010,13 +2010,17 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       int IdxType = APM->Index->Load->getType()->getScalarSizeInBits() / 8;
       auto *GEP = dyn_cast<GetElementPtrInst>(APM->Store->getPointerOperand());
       DSA_CHECK(GEP);
+      auto MemoryTy = SI.isSpad(GEP->getPointerOperand()) ? DMT_SPAD : DMT_DMA;
+      auto MemoryOp = APM->Op->getOpcode() == BinaryOperator::Add ? DMO_Add : DMO_Write;
+
       CGC.INSTANTIATE_1D_INDIRECT(APM->SoftPortNum, DType, IdxPort, IdxType,
                                   GEP->getOperand(0), IB->getInt64(0),
-                                  N, DMT_SPAD, DMO_Add, false, false);
+                                  N, MemoryTy, MemoryOp, false, false);
       DSA_LOG(CODEGEN)
         << "[AtomicSpad] WritePort: " << APM->SoftPortNum << ", DType: " << DType
         << ", IdxPort: " << IdxPort << ", IdxType: " << IdxType << ", Start: " << GEP->getOperand(0)
-        << ", N: " << *N << ", SPAD Add";
+        << ", N: " << *N << ", " << ((MemoryTy == DMT_SPAD) ? "SPAD" : "DRAM") << ", "
+        << (MemoryOp == DMO_Add ? "Add" : "Write");
 
       APM->IntrinInjected = true;
     }
