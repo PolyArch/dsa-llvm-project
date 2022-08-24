@@ -1,3 +1,4 @@
+#include "DFGEntry.h"
 #include "Util.h"
 #include "dsa/arch/model.h"
 #include "dsa/core/singleton.h"
@@ -8,6 +9,7 @@
 #include "./StreamAnalysis.h"
 
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include <string>
@@ -33,6 +35,41 @@ std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> gatherConfigScope(Funct
   return Res;
 }
 
+void DFGAnalysisResult::injectAnalyzedArrayHint(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
+  for (int i = 0; i < (int) DF.DFGs.size(); ++i) { // NOLINT
+    auto &Entries = DF.DFGs[i]->Entries;
+    Instruction *Inst = nullptr;
+    for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
+      auto *Entry = Entries[j];
+      int DType = -1;
+      if (auto *MP = dyn_cast<MemPort>(Entry)) {
+        DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+        Inst = MP->Load;
+      } else if (auto *PM = dyn_cast<PortMem>(Entry)) {
+        DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+        Inst = PM->Store;
+      } else if (auto *SMP = dyn_cast<SLPMemPort>(Entry)) {
+        DType = SMP->Coal[0]->Load->getType()->getScalarSizeInBits() / 8;
+        Inst = SMP->Coal[0]->Load;
+      } else if (auto *SPM = dyn_cast<SLPPortMem>(Entry)) { 
+        DType = SPM->Coal[0]->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+        Inst = SPM->Coal[0]->Store;
+      }
+      if (DType != -1) {
+        std::pair<float, float> PortMemReuse = dsa::analysis::getPortReuse(Entry, CGC, *this, DType);
+        auto *Array = findArrayInvolved(Inst, ArraySize, SI);
+        auto *Hint = ArraySize[Array];
+        if (auto *Reuse = dyn_cast<ConstantFP>(Hint->getOperand(2))) {
+          auto DReuse = Reuse->getValueAPF().convertToDouble();
+          if (std::fabs(DReuse + 1) < 1e-5) {
+            Hint->setOperand(2, ConstantFP::get(CGC.IB->getContext(), APFloat((double) PortMemReuse.first)));
+            DSA_LOG(ARRAY_HINT) << "Injected hint: " << *Hint;
+          }
+        }
+      }
+    }
+  }
+}
 
 void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   auto *Start = DF.Config;
@@ -1963,6 +2000,71 @@ gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenCon
     Elem->eraseFromParent();
   }
   return Res;
+}
+
+
+float getPortDataTraffic(LinearCombine *LC, float PortDType) {
+  float Traffic = 1.0f;
+  for (auto *TC : LC->TripCount) { //NOLINT 
+    if (auto *SCEVTripCount = dyn_cast<SCEVConstant>(TC->Raw)) {
+      Traffic *= SCEVTripCount->getAPInt().getSExtValue();
+    }
+    else {
+      Traffic = 0.0f;
+      break;
+    }
+  }
+  return Traffic * PortDType;
+}
+
+
+float getReuseTrafficAtLevel(LinearCombine *LC, int Lvl, float BaseStream) {
+
+  float ReuseTraffic = 0.0f;
+  if (auto *SCEVStride = dyn_cast<SCEVConstant>(LC->Coef[Lvl]->Raw))
+    if (auto *SCEVTripCount = dyn_cast<SCEVConstant>(LC->TripCount[Lvl]->Raw)) {
+      float Stride = static_cast <float> (SCEVStride->getAPInt().getSExtValue());
+      float TripCount = static_cast <float> (SCEVTripCount->getAPInt().getSExtValue());
+      if (Stride == 0.0f)
+        ReuseTraffic = BaseStream;
+      else if (Stride < BaseStream)
+        ReuseTraffic = Stride * (TripCount - 1) + BaseStream;
+      else
+        ReuseTraffic = BaseStream * TripCount;
+    }
+  return ReuseTraffic;
+}
+
+
+std::pair<float, float> getPortReuse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR, float PortDType) { 
+  std::pair<float, float> RRAT(0.0f, 0.0f);
+  SEWrapper *SW = DAR.affineMemoryAccess(DE, CGC.SE, false);
+  if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+    DSA_LOG(ARRAY_HINT) << LC->toString();
+    float PortDataTraffic = getPortDataTraffic(LC, PortDType);
+    if (PortDataTraffic == 0.0f) {
+      return RRAT;
+    }
+    if (auto *SCEVInnerMostStride = dyn_cast<SCEVConstant>(LC->Coef[0]->Raw)) {
+      float InnerMostStride = static_cast <float> (SCEVInnerMostStride->getAPInt().getSExtValue());
+      if (InnerMostStride != PortDType) 
+        return RRAT;
+      if (auto *SCEVInnerMostTripCount = dyn_cast<SCEVConstant>(LC->TripCount[0]->Raw)) {
+        float InnerMostTripCount = static_cast <float> (SCEVInnerMostTripCount->getAPInt().getSExtValue());
+        float BaseStream = InnerMostStride * InnerMostTripCount;
+        float ReuseTraffic = BaseStream;
+        if (LC->Coef.size() == 1) {
+          RRAT.second = ReuseTraffic;
+          return RRAT;
+        }
+        for (unsigned int lvl = 1; lvl < LC->Coef.size(); ++lvl) // NOLINT
+          ReuseTraffic = getReuseTrafficAtLevel(LC, lvl, ReuseTraffic);
+        RRAT.second = ReuseTraffic;
+      }
+    }
+    RRAT.first = 1.0f - RRAT.second / PortDataTraffic;
+  }
+  return RRAT;
 }
 
 } // namespace analysis

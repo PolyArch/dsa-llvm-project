@@ -274,7 +274,7 @@ struct AccInfo {
    * \brief The loop level of accumulator register resetting.
    */
   int ResetLevel;
-  /*!
+  /*
    * \brief The loop level of finalizing the result.
    */
   int ProduceLevel;
@@ -338,6 +338,8 @@ struct DFGAnalysisResult {
    * \brief
    */
   void fuseAffineDimensions(ScalarEvolution &SE);
+
+  void injectAnalyzedArrayHint(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
 };
 
 
@@ -523,6 +525,20 @@ const SCEV *productTripCount(std::vector<analysis::SEWrapper*> &TC, ScalarEvolut
 
 xform::DataStream *
 extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
+
+/*
+ * \brief Use DFG Loop Nest to figure out overall DFG Traffic
+ */ 
+float getPortDataTraffic(LinearCombine *LC, float PortDType); 
+/*
+ * \brief Find the reuse at a given level
+ */
+float getReuseTrafficAtLevel(LinearCombine *LC, int Lvl, float BaseStream);
+
+/*
+ * \brief Fint the reuse of a given port
+ */
+std::pair<float, float> getPortReuse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR, float PortDType); 
 
 } // namespace analysis
 } // namespace dsa

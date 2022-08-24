@@ -275,7 +275,6 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
       auto *FLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
       auto *LC = dyn_cast<analysis::LinearCombine>(FLI);
       DSA_CHECK(LC) << *Ptr0 << " is NOT a linear combination!";
-      DSA_INFO << LC->toString();
       LC = new analysis::LinearCombine(*LC);
       auto LoopN = LC->TripCount;
       // No repeat!
@@ -376,6 +375,8 @@ std::string useArrayHint(PortBase *PB, Value *Ptr, analysis::DFGAnalysisResult &
         auto *CFP = dyn_cast<ConstantFP>(Call->getOperand(2));
         DSA_CHECK(CFP) << *Call->getOperand(2);
         PB->Meta.reuse = CFP->getValueAPF().convertToDouble();
+        std::ostringstream OSS;
+        PB->Meta.to_pragma(OSS);
       }
       return ArrayName;
     }

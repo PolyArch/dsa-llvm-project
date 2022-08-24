@@ -14,4 +14,6 @@ target_include_directories(DSAPass PRIVATE
   $ENV{SS}/ss-scheduler/3rd-party/libtorch/include/torch/csrc/api/include
   $ENV{SS}/ss-scheduler/3rd-party/libtorch/include/)
 
+target_compile_definitions(DSAPass PRIVATE ENV_CACHE )
+
 target_compile_definitions(DSAPass PUBLIC ENABLE_LLVM)

@@ -115,7 +115,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       if (dsa::utils::ModuleContext().FUSE_STREAM) {
         DSA_LOG(PASS) << i << ": Fusing affined dimensions...";
         DAR.fuseAffineDimensions(CGC.SE);
-      }
+      } 
+      DSA_LOG(PASS) << i << ": Beginning reuse analysis..."; 
+      DAR.injectAnalyzedArrayHint(DF, CGC);
       DSA_LOG(PASS) << i << ": Extracting SPAD...";
       dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Emitting DFG...";
