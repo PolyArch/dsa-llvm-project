@@ -166,11 +166,11 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
       DSA_LOG(PASS) << i << ": Erasing offloaded instructions...";
       eraseOffloadedInstructions(DF, CGC);
-    }
-    GlobalSuccessSchedule = GlobalSuccessSchedule && LocalSuccessSchedule;
-    if (!GlobalSuccessSchedule) {
-      DSA_LOG(PASS) << "DFG " << i << " failed to schedule";
-      break;
+      GlobalSuccessSchedule = GlobalSuccessSchedule && LocalSuccessSchedule;
+      if (!GlobalSuccessSchedule) {
+        DSA_LOG(PASS) << "DFG " << i << " failed to schedule";
+        break;
+      }
     }
     for (auto &Elem : DU.DAR[0].ArraySize) {
       Elem.second->eraseFromParent();
