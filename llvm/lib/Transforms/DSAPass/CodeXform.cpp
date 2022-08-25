@@ -645,7 +645,8 @@ struct DFGPrinter : dsa::DFGVisitor {
       DSA_CHECK(Granularity % DType == 0);
       int Bits = std::max((int) DType, Granularity);
       int GranCoal = Bits / DType;
-      DSA_CHECK(IP->Parent->getUnroll() % GranCoal == 0);
+      DSA_CHECK(IP->Parent->getUnroll() % GranCoal == 0)
+        << IP->Parent->getUnroll() << " % " << GranCoal;
       int AdjustedLanes = IP->Parent->getUnroll() / GranCoal;
       OS << "Input" << Bits << ": " << IP->name();
       if (IP->shouldUnroll()) {
