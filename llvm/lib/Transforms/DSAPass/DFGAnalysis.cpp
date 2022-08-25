@@ -58,12 +58,14 @@ void DFGAnalysisResult::injectAnalyzedArrayHint(DFGFile &DF, dsa::xform::CodeGen
       if (DType != -1) {
         std::pair<float, float> PortMemReuse = dsa::analysis::getPortReuse(Entry, CGC, *this, DType);
         auto *Array = findArrayInvolved(Inst, ArraySize, SI);
-        auto *Hint = ArraySize[Array];
-        if (auto *Reuse = dyn_cast<ConstantFP>(Hint->getOperand(2))) {
-          auto DReuse = Reuse->getValueAPF().convertToDouble();
-          if (std::fabs(DReuse + 1) < 1e-5) {
-            Hint->setOperand(2, ConstantFP::get(CGC.IB->getContext(), APFloat((double) PortMemReuse.first)));
-            DSA_LOG(ARRAY_HINT) << "Injected hint: " << *Hint;
+        if (Array) {
+          auto *Hint = ArraySize[Array];
+          if (auto *Reuse = dyn_cast<ConstantFP>(Hint->getOperand(2))) {
+            auto DReuse = Reuse->getValueAPF().convertToDouble();
+            if (std::fabs(DReuse + 1) < 1e-5) {
+              Hint->setOperand(2, ConstantFP::get(CGC.IB->getContext(), APFloat((double) PortMemReuse.first)));
+              DSA_LOG(ARRAY_HINT) << "Injected hint: " << *Hint;
+            }
           }
         }
       }
@@ -778,11 +780,11 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
         std::vector<const SCEV*> Stride;
         int PI = LC->partialInvariant();
         auto &TripCnt = LC->TripCount;
-        for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
-          N.push_back(TripCnt[j]->Raw);
-          Stride.push_back(LC->Coef[j]->Raw);
-        }
         if (LC->Coef.size() - PI == 3) {
+          for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
+            N.push_back(TripCnt[j]->Raw);
+            Stride.push_back(LC->Coef[j]->Raw);
+          }
           if (auto *CIS2D = dyn_cast<SCEVConstant>(Stride[1])) {
             if (auto *CIN1D = dyn_cast<SCEVConstant>(N[0])) {
               if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
@@ -1877,7 +1879,6 @@ DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
   DSA_CHECK(SBCONFIG);
   SSModel Model(SBCONFIG);
   auto *BFI = CGC.BFI;
-  DSA_INFO << DF.DFGs.size();
   for (auto *Elem : DF.DFGs) {
     Idx.push_back(0);
     Freq.push_back(0);
