@@ -1149,6 +1149,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
         auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[i]);
         if (isa<SCEVCouldNotCompute>(NSCEV)) {
           DLI.TripCount.emplace_back();
+          DSA_WARNING << "Trip count of Loop " << *LoopNest[i] << " could not compute!";
         } else {
           NSCEV = SE.getAddExpr(NSCEV, SE.getConstant(APInt(64, 1, true)));
           if (const auto *MME = dyn_cast<SCEVMinMaxExpr>(NSCEV)) {
@@ -1161,6 +1162,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
           }
           DSA_LOG(AFFINE) << *NSCEV;
           auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
+          DSA_LOG(AFFINE) << LoopSlice.size() << " loops above";
           DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest[i],
                                                              LoopSlice, DLI.TripCount, LinearOverride));
           DLI.TripCount.back()->Parent.L = LoopNest[i];

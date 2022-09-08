@@ -92,8 +92,10 @@ bool StreamSpecialize::runOnFunction(Function &F) {
 
     DFGFile DF(Start, End, this);
     DF.ID = i;
-    DSA_LOG(PASS) << i << ": Extracting DFG IR...";
+    DSA_LOG(PASS) << i << ": Extracting DFG IR from "
+      << *ScopePairs[i].first << " " << *ScopePairs[i].second;
     dsa::analysis::extractDFGFromScope(DF, CGC);
+    DSA_LOG(PASS) << DF.DFGs.size() << " DFGs extracted...";
     dsa::analysis::DFGUnroll DU(DF, CGC);
     bool LocalSuccessSchedule = false;
     while (DU.hasNext()) {
