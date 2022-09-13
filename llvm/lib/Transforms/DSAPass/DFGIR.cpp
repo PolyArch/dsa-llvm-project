@@ -362,7 +362,7 @@ void DedicatedDFG::dump(std::ostringstream &OS) {
   if (!OS.str().empty())
     OS << "\n----\n\n";
   if (dsa::utils::ModuleContext().TRIGGER) {
-    DSA_CHECK(dsa::utils::ModuleContext().TEMPORAL)
+    DSA_CHECK(dsa::utils::ModuleContext().TemporalFound)
         << "Trigger cannot be enabled without temporal";
     OS << "#pragma group temporal\n";
   }

@@ -961,7 +961,7 @@ struct DFGPrinter : dsa::DFGVisitor {
 
   void Visit(DedicatedDFG *DD) override {
     if (utils::ModuleContext().TRIGGER || DD->GoTemporal) {
-      DSA_CHECK(utils::ModuleContext().TEMPORAL)
+      DSA_CHECK(utils::ModuleContext().TemporalFound)
           << "Trigger cannot be enabled without temporal";
       OS << "#pragma group temporal\n";
     }
