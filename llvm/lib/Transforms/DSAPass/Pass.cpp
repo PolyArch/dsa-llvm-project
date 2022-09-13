@@ -4,6 +4,8 @@
 #include <queue>
 #include <sstream>
 
+#include "dsa/arch/model.h"
+
 #include "./llvm_common.h"
 
 #include "CodeXform.h"
@@ -20,8 +22,53 @@ using namespace llvm;
 #define DEBUG_TYPE "stream-specialize"
 
 bool StreamSpecialize::runOnModule(Module &M) {
-  auto &TP = dsa::utils::ModuleContext().TP;
+  auto &MC = dsa::utils::ModuleContext();
+  auto &TP = MC.TP;
   TP.beginRoi();
+
+  auto *ADGFile = getenv("SBCONFIG");
+  DSA_CHECK(ADGFile);
+  dsa::SSModel Model(ADGFile);
+
+  {
+    bool RecBusFound = false;
+    bool IndirectFound = false;
+    bool TemporalFound = false;
+    int MostFineGrainFU = 64;
+    for (auto *Elem : Model.subModel()->node_list()) {
+      switch (Elem->type()) {
+      case dsa::ssnode::NodeType::Recurrance: {
+        RecBusFound = true;
+        break;
+      }
+      case dsa::ssnode::NodeType::DirectMemoryAccess: {
+        auto *DMA = dynamic_cast<dsa::ssdma*>(Elem);
+        IndirectFound = DMA->indirect_idx || DMA->indirect_l1d || DMA->indirect_s2d;
+        break;
+      }
+      case dsa::ssnode::NodeType::Scratchpad: {
+        auto *SPM = dynamic_cast<dsa::ssscratchpad*>(Elem);
+        IndirectFound = SPM->indirect_idx || SPM->indirect_l1d || SPM->indirect_s2d;
+        break;
+      }
+      case dsa::ssnode::NodeType::FunctionUnit: {
+        auto *FU = dynamic_cast<dsa::ssfu*>(Elem);
+        TemporalFound = FU->is_shared();
+        MostFineGrainFU = std::min(MostFineGrainFU, FU->granularity());
+        break;
+      }
+      default:
+        break;
+      }
+    }
+    MC.REC = MC.REC && RecBusFound;
+    MC.IND = MC.IND && IndirectFound;
+    MC.TEMPORAL = MC.TEMPORAL && TemporalFound;
+    if (MC.GRANULARITY == -1) {
+      MC.GRANULARITY = MostFineGrainFU;
+      DSA_WARNING << "The finest-granularity is set to " << MC.GRANULARITY << " by ADG specification.";
+    }
+  }
 
   for (auto &F : M) {
     if (F.isDeclaration()) {

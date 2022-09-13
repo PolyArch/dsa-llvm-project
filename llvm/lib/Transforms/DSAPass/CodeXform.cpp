@@ -282,6 +282,10 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
         DSA_LOG(CODEGEN) << "Recurrence should not have inner repeat";
         return nullptr;
       }
+      if (LC->TripCount.size() == 1) {
+        DSA_LOG(CODEGEN) << "Should have more than 1-dim to repeat to recur!";
+        return nullptr;
+      }
 
       // Outer should not be stretched!
       if (!isa<analysis::LoopInvariant>(LC->Coef.back())) {
@@ -291,9 +295,12 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
 
       if (auto *O = dyn_cast<SCEVConstant>(LC->Coef.back()->base())) {
         if (O->getAPInt().getSExtValue()) {
-          DSA_LOG(CODEGEN) << "Not a repeated update!";
+          DSA_LOG(CODEGEN) << "Not a repeated update! [outer not zero]";
           return nullptr;
         }
+      } else {
+        DSA_LOG(CODEGEN) << "Not a repeated update! [outer not const at all]";
+        return nullptr;
       }
 
       if (EmitDFG) {
@@ -315,7 +322,7 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
           }
           Conc = CII;
         } else {
-          errs() << "[Warning] To hide the latency " << PM->Latency
+          DSA_WARNING << "To hide the latency " << PM->Latency
                  << ", make sure your variable recur distance will not overwhlem "
                     "the FIFO buffer!";
         }

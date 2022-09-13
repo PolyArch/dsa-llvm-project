@@ -146,15 +146,11 @@ struct ModuleFlags {
    */
   DEFINE_FLAG(GRANULARITY, -1)
   /*!
-   * \brief If the computational fabric is backpressured.
-   */
-  DEFINE_FLAG(BACKCGRA, 1)
-  /*!
-   * \brief If the computational fabric is backpressured.
+   * \brief If the register bitstream is faked.
    */
   DEFINE_FLAG(FAKE, 0)
   /*!
-   * \brief If the computational fabric is backpressured.
+   * \brief If disable array node meta info generation.
    */
   DEFINE_FLAG(NOARRAY, 0)
   /*!
@@ -181,7 +177,6 @@ struct ModuleFlags {
     getFlagFUSE_STREAM();
     getFlagSLP_STREAM();
     getFlagGRANULARITY();
-    getFlagBACKCGRA();
     getFlagFAKE();
     getFlagSEED();
     getFlagNOARRAY();
