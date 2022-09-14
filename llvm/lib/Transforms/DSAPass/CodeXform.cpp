@@ -686,7 +686,8 @@ struct DFGPrinter : dsa::DFGVisitor {
 
       Visit(cast<DFGEntry>(CB));
 
-      int Lanes = getLanes(CB->underlyingInst()->getType()->getScalarSizeInBits());
+      // TODO(@were): I hope this getOperand(0) is OK...
+      int Lanes = getLanes(CB->underlyingInst()->getOperand(0)->getType()->getScalarSizeInBits());
       int Degree = (CB->shouldUnroll() ? CB->Parent->getUnroll() : 1);
       for (int vec = 0; vec * Lanes < Degree; ++vec) { // NOLINT
         OS << CB->name(vec) << " = "
@@ -2073,6 +2074,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
     Value *SAR = IB->getInt64(Elem.second);
     SAR = IB->CreateIntToPtr(SAR, Elem.first->getType());
     Elem.first->replaceAllUsesWith(SAR);
+    DSA_INFO << "Replace all " << Elem.first << " w/ " << *SAR;
   }
 }
 

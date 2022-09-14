@@ -43,12 +43,12 @@ bool StreamSpecialize::runOnModule(Module &M) {
       }
       case dsa::ssnode::NodeType::DirectMemoryAccess: {
         auto *DMA = dynamic_cast<dsa::ssdma*>(Elem);
-        IndirectFound = DMA->indirect_idx || DMA->indirect_l1d || DMA->indirect_s2d;
+        IndirectFound = IndirectFound || (DMA->indirectLength1DStream() || DMA->indirectIndexStream() || DMA->indirectStride2DStream());
         break;
       }
       case dsa::ssnode::NodeType::Scratchpad: {
         auto *SPM = dynamic_cast<dsa::ssscratchpad*>(Elem);
-        IndirectFound = SPM->indirect_idx || SPM->indirect_l1d || SPM->indirect_s2d;
+        IndirectFound = IndirectFound || (SPM->indirectIndexStream() || SPM->indirectLength1DStream() || SPM->indirectStride2DStream());
         break;
       }
       case dsa::ssnode::NodeType::FunctionUnit: {
@@ -66,6 +66,9 @@ bool StreamSpecialize::runOnModule(Module &M) {
     }
     MC.REC = MC.REC && RecBusFound;
     MC.IND = MC.IND && IndirectFound;
+    if (!IndirectFound) {
+      DSA_WARNING << "Indirect memory capability not found!";
+    }
     if (MC.GRANULARITY == -1) {
       MC.GRANULARITY = MostFineGrainFU;
       DSA_WARNING << "The finest-granularity is set to " << MC.GRANULARITY << " by ADG specification.";
@@ -126,7 +129,6 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   DSA_LOG(PASS) << "Transforming " << F.getName();
   SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
   dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI, BFI);
-  bool GlobalSuccessSchedule = true;
 
   // Store old temporal fallback option
   int OldTF = dsa::utils::ModuleContext().TEMPORAL_FALLBACK;
@@ -155,7 +157,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (!TEMPORAL_FALLBACK && !dsa::utils::ModuleContext().TemporalFound) {
       dsa::xform::eliminateTemporal(F);
     }
-    for (int i = 0, N = ScopePairs.size(); i < N; ++i) { // NOLINT
+    for (int i = 0; i < (int) ScopePairs.size(); ++i) { // NOLINT
       if (!dsa::utils::ModuleContext().EXTRACT) {
         dsa::utils::ModuleContext().TP.beginRoi();
       }
@@ -217,34 +219,38 @@ bool StreamSpecialize::runOnFunction(Function &F) {
         LocalSuccessSchedule = true;
       }
       if (!dsa::utils::ModuleContext().EXTRACT) {
-        dsa::analysis::DFGAnalysisResult &DAR = DU.best();
-        auto &CI = DAR.CI;
-        DF.FileName = CI.Name + ".dfg";
-        {
-          std::string Raw = CI.Name;
-          int R = Raw.size(), L = Raw.size() - 1;
-          for (int i = DF.DFGs.size() - 1; i >= 0; --i) { // NOLINT
-            while (L >= 0 && Raw[L] != '_') --L;
-            int X = std::atoi(std::string(Raw.begin() + L + 1, Raw.begin() + R).c_str());
-            if (auto *DD = dyn_cast<DedicatedDFG>(DF.DFGs[i])) {
-              DD->UnrollFactor = X;
+        if (LocalSuccessSchedule) {
+          dsa::analysis::DFGAnalysisResult &DAR = DU.best();
+          auto &CI = DAR.CI;
+          DF.FileName = CI.Name + ".dfg";
+          {
+            std::string Raw = CI.Name;
+            int R = Raw.size(), L = Raw.size() - 1;
+            for (int i = DF.DFGs.size() - 1; i >= 0; --i) { // NOLINT
+              while (L >= 0 && Raw[L] != '_') --L;
+              int X = std::atoi(std::string(Raw.begin() + L + 1, Raw.begin() + R).c_str());
+              if (auto *DD = dyn_cast<DedicatedDFG>(DF.DFGs[i])) {
+                DD->UnrollFactor = X;
+              }
+              R = L--;
             }
-            R = L--;
           }
-        }
-        DSA_LOG(DSE) << "Use DSE: " << DF.getName();
-        DSA_LOG(PASS) << i << ": Injecting configuration...";
-        dsa::analysis::extractDFGPorts(DF, DAR.SI, false);
-        DSA_LOG(PASS) << i << ": Injecting configuration...";
-        dsa::xform::injectConfiguration(CGC, CI, Start, End);
-        DSA_LOG(PASS) << i << ": Injecting control intrinsics...";
-        dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
-        DSA_LOG(PASS) << i << ": Erasing offloaded instructions...";
-        eraseOffloadedInstructions(DF, CGC);
-        GlobalSuccessSchedule = GlobalSuccessSchedule && LocalSuccessSchedule;
-        if (!GlobalSuccessSchedule) {
-          DSA_LOG(PASS) << "DFG " << i << " failed to schedule";
-          break;
+          DSA_LOG(DSE) << "Use DSE: " << DF.getName();
+          DSA_LOG(PASS) << i << ": Injecting configuration...";
+          dsa::analysis::extractDFGPorts(DF, DAR.SI, false);
+          DSA_LOG(PASS) << i << ": Injecting configuration...";
+          dsa::xform::injectConfiguration(CGC, CI, Start, End);
+          DSA_LOG(PASS) << i << ": Injecting control intrinsics...";
+          dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
+          DSA_LOG(PASS) << i << ": Erasing offloaded instructions...";
+          eraseOffloadedInstructions(DF, CGC);
+          DSA_LOG(PASS) << *Start << " " << *End << " transforation succeeds! Erased offloaded instructions!";
+          End->eraseFromParent();
+          Start->eraseFromParent();
+          ScopePairs.erase(ScopePairs.begin() + i);
+          --i;
+        } else {
+          DSA_LOG(PASS) << *Start << " " << *End << " transforation failed! Will try more potential configs!";
         }
       }
       for (auto &Elem : DU.DAR[0].ArraySize) {
@@ -257,26 +263,22 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     }
     // If we either successfully scheduled one or are extracting DFG,
     // we no longer need to explore this dimension.
-    if (GlobalSuccessSchedule || dsa::utils::ModuleContext().EXTRACT) {
+    if (dsa::utils::ModuleContext().EXTRACT) {
       break;
     }
   }
 
   DSA_LOG(PASS) << "Done with transformation and rewriting!";
 
-  if (!dsa::utils::ModuleContext().EXTRACT) {
-    DSA_LOG(PASS) << "Erasing all config scopes!";
-    for (auto &Pair : ScopePairs) {
-      Pair.second->eraseFromParent();
-      Pair.first->eraseFromParent();
-    }
-  } else {
+  if (dsa::utils::ModuleContext().EXTRACT) {
     return false;
   }
 
-  DSA_CHECK(GlobalSuccessSchedule);
+  for (auto &Elem : ScopePairs) {
+    DSA_WARNING << *Elem.first << " " << Elem.second << " scope not transformed, fallback to host execution!";
+  }
 
-  DSA_LOG(PASS) << "Done! " << GlobalSuccessSchedule;
+  DSA_LOG(PASS) << "Done! All scopes mapped!";
 
   DSA_LOG(RES) << F;
   // Restore the old value

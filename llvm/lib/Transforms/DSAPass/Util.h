@@ -118,7 +118,7 @@ struct ModuleFlags {
   /*!
    * \brief If ADG is old version.
    */
-  DEFINE_FLAG(COMPAT_ADG, 1)
+  DEFINE_FLAG(COMPAT_ADG, 0)
   /*!
    * \brief Perform transformation without O3 cleanup.
    */
