@@ -1,7 +1,7 @@
 #include "DFGEntry.h"
 #include "Util.h"
-#include "dsa/arch/model.h"
-#include "dsa/core/singleton.h"
+// #include "dsa/arch/model.h"
+// #include "dsa/core/singleton.h"
 #include "dsa/debug.h"
 
 #include "./CodeXform.h"
@@ -1876,10 +1876,10 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
 }
 
 DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
-  dsa::ContextFlags::Global().adg_compat = dsa::utils::ModuleContext().COMPAT_ADG;
+  // dsa::ContextFlags::Global().adg_compat = dsa::utils::ModuleContext().COMPAT_ADG;
   auto *SBCONFIG = getenv("SBCONFIG");
   DSA_CHECK(SBCONFIG);
-  SSModel Model(SBCONFIG);
+  // SSModel Model(SBCONFIG);
   auto *BFI = CGC.BFI;
   for (auto *Elem : DF.DFGs) {
     Idx.push_back(0);

@@ -4,7 +4,7 @@
 #include <queue>
 #include <sstream>
 
-#include "dsa/arch/model.h"
+// #include "dsa/arch/model.h"
 
 #include "./llvm_common.h"
 
@@ -26,52 +26,35 @@ bool StreamSpecialize::runOnModule(Module &M) {
   auto &TP = MC.TP;
   TP.beginRoi();
 
-  auto *ADGFile = getenv("SBCONFIG");
-  DSA_CHECK(ADGFile);
-  dsa::SSModel Model(ADGFile);
-
+  // TODO(@were): Open these after fully decoupled ADG and DSE libs.
   {
-    bool RecBusFound = false;
-    bool IndirectFound = false;
-    bool &TemporalFound = MC.TemporalFound;
-    int MostFineGrainFU = 64;
-    for (auto *Elem : Model.subModel()->node_list()) {
-      switch (Elem->type()) {
-      case dsa::ssnode::NodeType::Recurrance: {
-        RecBusFound = true;
-        break;
-      }
-      case dsa::ssnode::NodeType::DirectMemoryAccess: {
-        auto *DMA = dynamic_cast<dsa::ssdma*>(Elem);
-        IndirectFound = IndirectFound || (DMA->indirectLength1DStream() || DMA->indirectIndexStream() || DMA->indirectStride2DStream());
-        break;
-      }
-      case dsa::ssnode::NodeType::Scratchpad: {
-        auto *SPM = dynamic_cast<dsa::ssscratchpad*>(Elem);
-        IndirectFound = IndirectFound || (SPM->indirectIndexStream() || SPM->indirectLength1DStream() || SPM->indirectStride2DStream());
-        break;
-      }
-      case dsa::ssnode::NodeType::FunctionUnit: {
-        auto *FU = dynamic_cast<dsa::ssfu*>(Elem);
-        TemporalFound = TemporalFound || FU->is_shared();
-        if (FU->is_shared()) {
-          DSA_INFO << FU->name() << " is shared!";
-        }
-        MostFineGrainFU = std::min(MostFineGrainFU, FU->granularity());
-        break;
-      }
-      default:
-        break;
-      }
-    }
+    auto *ADGFile = getenv("SBCONFIG");
+    DSA_CHECK(ADGFile);
+    auto Cmd = formatv("ss_sched --extract-llvm-flags {0}", ADGFile).str();
+    ENFORCED_SYSTEM(Cmd.c_str());
+    std::ifstream Ifs(".extracted-llvm-flags");
+    DSA_CHECK(Ifs.good());
+
+    std::string Ky;
+    DSA_CHECK(Ifs >> Ky);
+    DSA_CHECK(Ky == "REC");
+    int RecBusFound;
+    Ifs >> RecBusFound;
     MC.REC = MC.REC && RecBusFound;
+
+    DSA_CHECK(Ifs >> Ky);
+    DSA_CHECK(Ky == "IND");
+    int IndirectFound;
+    Ifs >> IndirectFound;
     MC.IND = MC.IND && IndirectFound;
-    if (!IndirectFound) {
-      DSA_WARNING << "Indirect memory capability not found!";
-    }
+
+    DSA_CHECK(Ifs >> Ky);
+    DSA_CHECK(Ky == "FU-GRAN");
+    int MostFineGrainFU;
+    Ifs >> MostFineGrainFU;
     if (MC.GRANULARITY == -1) {
       MC.GRANULARITY = MostFineGrainFU;
-      DSA_WARNING << "The finest-granularity is set to " << MC.GRANULARITY << " by ADG specification.";
+      DSA_WARNING << "Granularity is overriden by ADG!";
     }
   }
 

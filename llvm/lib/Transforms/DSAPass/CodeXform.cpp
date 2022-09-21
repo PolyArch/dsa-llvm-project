@@ -623,11 +623,11 @@ struct DFGPrinter : dsa::DFGVisitor {
         using dfg::MetaPort;
         auto &Meta = IP->Meta;
         if (Meta.source != MetaPort::Data::Unknown) {
-          OS << "#pragma src=" << dfg::MetaPort::DataText[(int)Meta.source]
+          OS << "#pragma src=" << dfg::MetaDataText[(int)Meta.source]
              << "\n";
         }
         if (Meta.dest != MetaPort::Data::Unknown) {
-          OS << "#pragma dest=" << dfg::MetaPort::DataText[(int)Meta.dest]
+          OS << "#pragma dest=" << dfg::MetaDataText[(int)Meta.dest]
              << "\n";
         }
         if (!Meta.dest_port.empty()) {
@@ -635,7 +635,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         }
         for (int i = 0; i < (int)MetaPort::Operation::Unknown; ++i) { // NOLINT
           if (Meta.op >> i & 1) {
-            OS << "#pragma op=" << MetaPort::OperationText[i] << "\n";
+            OS << "#pragma op=" << dfg::MetaOperationText[i] << "\n";
           }
         }
         if (Meta.conc) {
@@ -1733,7 +1733,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
             GEP->getOperand(0), IB->getInt64(0), N, MT, DMO_Read, Pene && (i == 0), false);
 
         // TODO: Support indirect read on the SPAD(?)
-        Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)DMT_DMA]);
+        Cur->Meta.set("src", dsa::dfg::MetaDataText[(int)DMT_DMA]);
         Cur->Meta.set("dest", "memory");
         Cur->Meta.set("op", "indread");
 
